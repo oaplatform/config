@@ -6,7 +6,7 @@ BUILD_COUNTER=$1
 PROJECT_NAME=$2
 BRANCH_NAME=$3
 
-VERSION_XENOSS=$(grep -oP 'project\.version\>\K[^<]*' config/pom.xml)
+VERSION_XENOSS=$(grep -oP 'project\.version\>\K[^<]*' pom.xml)
 
 if [ "$BRANCH_NAME" == "master" ] || [ "$BRANCH_NAME" == "" ] || [ "$BRANCH_NAME" == "refs/heads/master" ]; then
   VERSION_BRANCH=""
