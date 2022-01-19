@@ -25,7 +25,7 @@
     </repositories>
 
     <properties>
-        <oap.config.project.version>1.4.2</oap.config.project.version>
+        <oap.config.project.version>1.4.3</oap.config.project.version>
     </properties>
 
     <build>
