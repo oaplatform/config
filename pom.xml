@@ -10,7 +10,7 @@
     <parent>
         <groupId>oap</groupId>
         <artifactId>oap.maven</artifactId>
-        <version>21.0.0</version>
+        <version>22.0.0</version>
     </parent>
 
     <modules>
@@ -25,7 +25,7 @@
     </repositories>
 
     <properties>
-        <oap.config.project.version>21.0.0</oap.config.project.version>
+        <oap.config.project.version>22.0.0</oap.config.project.version>
     </properties>
 
     <build>
