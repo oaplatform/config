@@ -1,11 +1,7 @@
-Configuration library for JVM languages.
+# Configuration library for JVM languages.
 
 [![Maven Central](https://maven-badges.herokuapp.com/maven-central/com.typesafe/config/badge.svg)](https://maven-badges.herokuapp.com/maven-central/com.typesafe/config)
-[![Build Status](https://travis-ci.org/lightbend/config.svg?branch=master)](https://travis-ci.org/lightbend/config)
-
-If you have questions or are working on a pull request or just
-curious, please feel welcome to join the chat room:
-[![Join chat https://gitter.im/lightbend/config](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/lightbend/config?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+[![Build Status](https://github.com/lightbend/config/actions/workflows/ci.yml/badge.svg)](https://github.com/lightbend/config/actions/workflows/ci.yml)
 
 ## Overview
 
@@ -98,20 +94,19 @@ to merge it in.
 
 ### Binary Releases
 
-Version 1.2.1 and earlier were built for Java 6, while newer
-versions (1.3.0 and above) will be built for Java 8.
+Typesafe Config is compatible with Java 8 and above.
 
 You can find published releases on Maven Central.
 
     <dependency>
         <groupId>com.typesafe</groupId>
         <artifactId>config</artifactId>
-        <version>1.4.1</version>
+        <version>1.4.4</version>
     </dependency>
 
 sbt dependency:
 
-    libraryDependencies += "com.typesafe" % "config" % "1.4.1"
+    libraryDependencies += "com.typesafe" % "config" % "1.4.4"
 
 Link for direct download if you don't use a dependency manager:
 
@@ -120,7 +115,7 @@ Link for direct download if you don't use a dependency manager:
 ### Release Notes
 
 Please see NEWS.md in this directory,
-https://github.com/lightbend/config/blob/master/NEWS.md
+https://github.com/lightbend/config/blob/main/NEWS.md
 
 ### API docs
 
@@ -128,10 +123,12 @@ https://github.com/lightbend/config/blob/master/NEWS.md
  - also published in jar form
  - consider reading this README first for an intro
  - for questions about the `.conf` file format, read
-   [HOCON.md](https://github.com/lightbend/config/blob/master/HOCON.md)
+   [HOCON.md](https://github.com/lightbend/config/blob/main/HOCON.md)
    in this directory
 
 ### Bugs and Patches
+
+**NOTE: Please read [Readme #Maintained-by](https://github.com/lightbend/config#Maintained-by) before spending time suggesting changes to this library.**
 
 Report bugs to the GitHub issue tracker. Send patches as pull
 requests on GitHub.
@@ -142,7 +139,7 @@ account - it takes 30 seconds.  You can do this at
 https://www.lightbend.com/contribute/cla
 
 Please see
-[CONTRIBUTING](https://github.com/lightbend/config/blob/master/CONTRIBUTING.md)
+[CONTRIBUTING](https://github.com/lightbend/config/blob/main/CONTRIBUTING.md)
 for more including how to make a release.
 
 ### Build
@@ -163,7 +160,7 @@ Scala dependency.
 
 ### Longer Examples
 
-See the examples in the `examples/` [directory](https://github.com/lightbend/config/tree/master/examples).
+See the examples in the `examples/` [directory](https://github.com/lightbend/config/tree/main/examples).
 
 You can run these from the sbt console with the commands `project
 config-simple-app-java` and then `run`.
@@ -256,6 +253,8 @@ system properties can be used to force a different config source
  - `config.file` specifies a filesystem path, again
    it should include the extension, not be a basename
  - `config.url` specifies a URL
+
+ **Note**: you need to pass `-Dconfig.file=path/to/config-file` before the jar itself, e.g. `java -Dconfig.file=path/to/config-file.conf -jar path/to/jar-file.jar`. Same applies for `-Dconfig.resource=config-file.conf`
 
 These system properties specify a _replacement_ for
 `application.{conf,json,properties}`, not an addition. They only
@@ -436,7 +435,7 @@ this:
 Using the `Config` interface, you could write
 `conf.getInt("foo.bar")`. The `foo.bar` string is called a _path
 expression_
-([HOCON.md](https://github.com/lightbend/config/blob/master/HOCON.md)
+([HOCON.md](https://github.com/lightbend/config/blob/main/HOCON.md)
 has the syntax details for these expressions). Iterating over this
 `Config`, you would get two entries; `"foo.bar" : 42` and
 `"foo.baz" : 43`. When iterating a `Config` you will not find
@@ -492,7 +491,7 @@ particular value manually).
 
 The JSON superset is called "Human-Optimized Config Object
 Notation" or HOCON, and files use the suffix `.conf`.  See
-[HOCON.md](https://github.com/lightbend/config/blob/master/HOCON.md)
+[HOCON.md](https://github.com/lightbend/config/blob/main/HOCON.md)
 in this directory for more detail.
 
 After processing a `.conf` file, the result is always just a JSON
@@ -803,7 +802,7 @@ have expressed interest in a branch off of 1.3.x supporting
 Java 7. If you want to work on that branch you might bring it up
 on [chat](https://gitter.im/lightbend/config). We can release a
 jar for Java 7 if someone(s) steps up to maintain the branch. The
-master branch does not use Java 8 "gratuitously" but some APIs
+main branch does not use Java 8 "gratuitously" but some APIs
 that use Java 8 types will need to be removed.
 
 ### Rationale for Supported File Formats
@@ -927,6 +926,9 @@ format.
 #### Go port
 
   * https://github.com/gurkankaymak/hocon
+ 
+#### Erlang port
+  * https://github.com/emqx/hocon
 
 #### Linting tool
 
@@ -934,7 +936,7 @@ format.
 
 #### Online playground
 
-   * https://hocon-playground.herokuapp.com/
+   * https://hocon-playground.avelier.dev/
 
 # Maintenance notes
 
@@ -944,6 +946,6 @@ The license is Apache 2.0, see LICENSE-2.0.txt.
 
 ## Maintained by 
 
-This project is maintained mostly by [@havocp](https://github.com/havocp) and [@akka-team](https://github.com/orgs/lightbend/teams/akka-team/members).
+The "Typesafe Config" library is an important foundation to how Akka and other JVM libraries manage configuration. We at [Lightbend](https://lightbend.com) consider the functionality of this library as feature complete. We will make sure "Typesafe Config" keeps up with future JVM versions, but will rarely make any other changes.
 
-Feel free to ping above maintainers for code review or discussions. Pull requests are very welcome–thanks in advance!
+We are thankful for all the work [@havocp](https://github.com/havocp) has put into creating the library initially and supporting its users over many more years, even after leaving Lightbend.

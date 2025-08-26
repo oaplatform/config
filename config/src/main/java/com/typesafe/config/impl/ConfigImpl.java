@@ -10,7 +10,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -249,7 +248,7 @@ public class ConfigImpl {
                 return emptyObject(origin);
 
             if (mapMode == FromMapMode.KEYS_ARE_KEYS) {
-                Map<String, AbstractConfigValue> values = new LinkedHashMap<String, AbstractConfigValue>();
+                Map<String, AbstractConfigValue> values = new HashMap<String, AbstractConfigValue>();
                 for (Map.Entry<?, ?> entry : ((Map<?, ?>) object).entrySet()) {
                     Object key = entry.getKey();
                     if (!(key instanceof String))
@@ -343,7 +342,7 @@ public class ConfigImpl {
     }
 
     private static AbstractConfigObject loadEnvVariables() {
-        return PropertiesParser.fromStringMap(newSimpleOrigin("env variables"), System.getenv());
+        return PropertiesParser.fromStringMap(newEnvVariable("env variables"), System.getenv());
     }
 
     private static class EnvVariablesHolder {
@@ -544,5 +543,9 @@ public class ConfigImpl {
 
     public static ConfigOrigin newURLOrigin(URL url) {
         return SimpleConfigOrigin.newURL(url);
+    }
+
+    public static ConfigOrigin newEnvVariable(String description) {
+        return SimpleConfigOrigin.newEnvVariable(description);
     }
 }

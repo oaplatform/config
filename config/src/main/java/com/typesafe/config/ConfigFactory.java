@@ -8,6 +8,7 @@ import com.typesafe.config.impl.Parseable;
 
 import java.io.File;
 import java.io.Reader;
+import java.lang.reflect.InvocationTargetException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Map;
@@ -30,7 +31,7 @@ import java.util.concurrent.Callable;
  * from a resource and nothing else.
  *
  * <p> You can find an example app and library <a
- * href="https://github.com/lightbend/config/tree/master/examples">on
+ * href="https://github.com/lightbend/config/tree/main/examples">on
  * GitHub</a>.  Also be sure to read the <a
  * href="package-summary.html#package_description">package
  * overview</a> which describes the big picture as shown in those
@@ -617,9 +618,10 @@ public final class ConfigFactory {
      * <p>
      * Environment variables are mangled in the following way after stripping the prefix "CONFIG_FORCE_":
      * <table border="1">
+     *   <caption>environment variables</caption>
      * <tr>
-     *     <th bgcolor="silver">Env Var</th>
-     *     <th bgcolor="silver">Config</th>
+     *     <th>Env Var</th>
+     *     <th>Config</th>
      * </tr>
      * <tr>
      *     <td>_&nbsp;&nbsp;&nbsp;[1 underscore]</td>
@@ -673,7 +675,7 @@ public final class ConfigFactory {
     /**
      * Converts a Java {@link java.util.Properties} object to a
      * {@link ConfigObject} using the rules documented in the <a
-     * href="https://github.com/lightbend/config/blob/master/HOCON.md">HOCON
+     * href="https://github.com/lightbend/config/blob/main/HOCON.md">HOCON
      * spec</a>. The keys in the <code>Properties</code> object are split on the
      * period character '.' and treated as paths. The values will all end up as
      * string values. If you have both "a=foo" and "a.b=bar" in your properties
@@ -1241,7 +1243,11 @@ public final class ConfigFactory {
 
         if (className != null) {
             try {
-                return ConfigLoadingStrategy.class.cast(Class.forName(className).newInstance());
+                return Class.forName(className).asSubclass(ConfigLoadingStrategy.class).getDeclaredConstructor().newInstance();
+            } catch (InvocationTargetException e) {
+                Throwable cause = e.getCause();
+                if (cause == null) throw new ConfigException.BugOrBroken("Failed to load strategy: " + className, e);
+                else throw new ConfigException.BugOrBroken("Failed to load strategy: " + className, cause);
             } catch (Throwable e) {
                 throw new ConfigException.BugOrBroken("Failed to load strategy: " + className, e);
             }
