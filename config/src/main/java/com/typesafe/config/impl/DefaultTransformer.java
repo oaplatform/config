@@ -6,7 +6,7 @@ package com.typesafe.config.impl;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import com.typesafe.config.ConfigValueType;
@@ -89,7 +89,7 @@ final class DefaultTransformer {
             // does not contain any numeric keys. This means we don't allow
             // empty objects here though :-/
             AbstractConfigObject o = (AbstractConfigObject) value;
-            Map<Integer, AbstractConfigValue> values = new HashMap<Integer, AbstractConfigValue>();
+            Map<Integer, AbstractConfigValue> values = new LinkedHashMap<Integer, AbstractConfigValue>();
             for (String key : o.keySet()) {
                 int i;
                 try {
