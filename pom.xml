@@ -5,7 +5,7 @@
 
     <artifactId>oap-config</artifactId>
     <name>oap-config</name>
-    <version>${oap.config.project.version}</version>
+    <version>${oap.project.version}</version>
 
     <parent>
         <groupId>oap</groupId>
@@ -20,12 +20,12 @@
     <repositories>
         <repository>
             <id>oap</id>
-            <url>https://artifacts.oaplatform.org/repository/maven/</url>
+            <url>https://artifacts.oaplatform.org/repository/oap-maven/</url>
         </repository>
     </repositories>
 
     <properties>
-        <oap.config.project.version>22.0.0</oap.config.project.version>
+        <oap.project.version>22.0.1</oap.project.version>
     </properties>
 
     <build>

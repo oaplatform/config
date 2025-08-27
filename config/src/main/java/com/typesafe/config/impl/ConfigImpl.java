@@ -9,7 +9,6 @@ import java.net.URL;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -43,7 +42,7 @@ public class ConfigImpl {
         LoaderCache() {
             this.currentSystemProperties = null;
             this.currentLoader = new WeakReference<ClassLoader>(null);
-            this.cache = new HashMap<String, Config>();
+            this.cache = new LinkedHashMap<String, Config>();
         }
 
         // for now, caching as long as the loader remains the same,
@@ -343,7 +342,7 @@ public class ConfigImpl {
     }
 
     private static AbstractConfigObject loadEnvVariables() {
-        return PropertiesParser.fromStringMap(newSimpleOrigin("env variables"), System.getenv());
+        return PropertiesParser.fromStringMap(newEnvVariable("env variables"), System.getenv());
     }
 
     private static class EnvVariablesHolder {
@@ -371,8 +370,8 @@ public class ConfigImpl {
 
 
     private static AbstractConfigObject loadEnvVariablesOverrides() {
-        Map<String, String> env = new HashMap(System.getenv());
-        Map<String, String> result = new HashMap();
+        Map<String, String> env = new LinkedHashMap(System.getenv());
+        Map<String, String> result = new LinkedHashMap();
 
         for (String key : env.keySet()) {
             if (key.startsWith(ENV_VAR_OVERRIDE_PREFIX)) {
@@ -449,7 +448,7 @@ public class ConfigImpl {
         private static String SUBSTITUTIONS = "substitutions";
 
         private static Map<String, Boolean> loadDiagnostics() {
-            Map<String, Boolean> result = new HashMap<String, Boolean>();
+            Map<String, Boolean> result = new LinkedHashMap<String, Boolean>();
             result.put(LOADS, false);
             result.put(SUBSTITUTIONS, false);
 
@@ -544,5 +543,9 @@ public class ConfigImpl {
 
     public static ConfigOrigin newURLOrigin(URL url) {
         return SimpleConfigOrigin.newURL(url);
+    }
+
+    public static ConfigOrigin newEnvVariable(String description) {
+        return SimpleConfigOrigin.newEnvVariable(description);
     }
 }

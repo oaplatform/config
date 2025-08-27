@@ -8,7 +8,7 @@
     <parent>
         <groupId>oap</groupId>
         <artifactId>oap-config</artifactId>
-        <version>${oap.config.project.version}</version>
+        <version>${oap.project.version}</version>
     </parent>
 
     <dependencies>

@@ -10,8 +10,8 @@ import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.time.Duration;
@@ -45,8 +45,8 @@ public class ConfigBeanImpl {
             throw new ConfigException.NotResolved(
                     "need to Config#resolve() a config before using it to initialize a bean, see the API docs for Config#resolve()");
 
-        Map<String, AbstractConfigValue> configProps = new HashMap<String, AbstractConfigValue>();
-        Map<String, String> originalNames = new HashMap<String, String>();
+        Map<String, AbstractConfigValue> configProps = new LinkedHashMap<String, AbstractConfigValue>();
+        Map<String, String> originalNames = new LinkedHashMap<String, String>();
         for (Map.Entry<String, ConfigValue> configProp : config.root().entrySet()) {
             String originalName = configProp.getKey();
             String camelName = ConfigImplUtil.toCamelCase(originalName);
@@ -106,7 +106,7 @@ public class ConfigBeanImpl {
             }
 
             // Fill in the bean instance
-            T bean = clazz.newInstance();
+            T bean = clazz.getDeclaredConstructor().newInstance();
             for (PropertyDescriptor beanProp : beanProps) {
                 Method setter = beanProp.getWriteMethod();
                 Type parameterType = setter.getGenericParameterTypes()[0];
@@ -125,8 +125,10 @@ public class ConfigBeanImpl {
                 setter.invoke(bean, unwrapped);
             }
             return bean;
-        } catch (InstantiationException e) {
+        } catch (NoSuchMethodException e) {
             throw new ConfigException.BadBean(clazz.getName() + " needs a public no-args constructor to be used as a bean", e);
+        } catch (InstantiationException e) {
+            throw new ConfigException.BadBean(clazz.getName() + " needs to be instantiable to be used as a bean", e);
         } catch (IllegalAccessException e) {
             throw new ConfigException.BadBean(clazz.getName() + " getters and setters are not accessible, they must be for use as a bean", e);
         } catch (InvocationTargetException e) {
@@ -191,7 +193,7 @@ public class ConfigBeanImpl {
     }
 
     private static Object getSetValue(Class<?> beanClass, Type parameterType, Class<?> parameterClass, Config config, String configPropName) {
-        return new HashSet((List) getListValue(beanClass, parameterType, parameterClass, config, configPropName));
+        return new LinkedHashSet((List) getListValue(beanClass, parameterType, parameterClass, config, configPropName));
     }
 
     private static Object getListValue(Class<?> beanClass, Type parameterType, Class<?> parameterClass, Config config, String configPropName) {
