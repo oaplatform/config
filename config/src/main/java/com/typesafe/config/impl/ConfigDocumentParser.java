@@ -420,7 +420,7 @@ final class ConfigDocumentParser {
             boolean lastInsideEquals = false;
             ArrayList<AbstractConfigNode> objectNodes = new ArrayList<AbstractConfigNode>();
             ArrayList<AbstractConfigNode> keyValueNodes;
-            HashMap<String, Boolean> keys  = new HashMap<String, Boolean>();
+            LinkedHashMap<String, Boolean> keys  = new LinkedHashMap<String, Boolean>();
             if (hadOpenCurly)
                 objectNodes.add(new ConfigNodeSingleToken(Tokens.OPEN_CURLY));
 

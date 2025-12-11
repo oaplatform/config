@@ -5,13 +5,25 @@
 
     <artifactId>oap-config</artifactId>
     <name>oap-config</name>
-    <version>${oap.config.project.version}</version>
+    <version>${oap.project.version}</version>
 
     <parent>
         <groupId>oap</groupId>
         <artifactId>oap.maven</artifactId>
-        <version>17.3.1.0</version>
+        <version>25.0.2</version>
     </parent>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>oap</groupId>
+                <artifactId>oap-dependencies</artifactId>
+                <version>25.0.2</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <modules>
         <module>config</module>
@@ -20,12 +32,12 @@
     <repositories>
         <repository>
             <id>oap</id>
-            <url>https://mvn.oaplatform.org</url>
+            <url>https://maven.xenoss.net/repository/oap-maven/</url>
         </repository>
     </repositories>
 
     <properties>
-        <oap.config.project.version>1.4.2</oap.config.project.version>
+        <oap.project.version>25.0.0</oap.project.version>
     </properties>
 
     <build>

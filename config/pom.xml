@@ -2,14 +2,13 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.typesafe</groupId>
     <artifactId>config</artifactId>
     <name>config</name>
 
     <parent>
         <groupId>oap</groupId>
         <artifactId>oap-config</artifactId>
-        <version>${oap.config.project.version}</version>
+        <version>${oap.project.version}</version>
     </parent>
 
     <dependencies>
