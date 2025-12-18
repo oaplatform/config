@@ -12,6 +12,7 @@ package com.typesafe.config;
  * 
  */
 public enum ConfigSyntax {
+    OAP,
     /**
      * Pedantically strict <a href="http://json.org">JSON</a> format; no
      * comments, no unexpected commas, no duplicate keys in the same object.

@@ -166,11 +166,12 @@ class SimpleIncluder implements FullIncluder {
     // loading app.{conf,json,properties} from the filesystem.
     static ConfigObject fromBasename(NameSource source, String name, ConfigParseOptions options) {
         ConfigObject obj;
-        if (name.endsWith(".conf") || name.endsWith(".json") || name.endsWith(".properties")) {
+        if (name.endsWith(".conf") || name.endsWith(".json") || name.endsWith(".properties") || name.endsWith(".oap")) {
             ConfigParseable p = source.nameToParseable(name, options);
 
             obj = p.parse(p.options().setAllowMissing(options.getAllowMissing()));
         } else {
+            ConfigParseable oapHandle = source.nameToParseable(name + ".oap", options);
             ConfigParseable confHandle = source.nameToParseable(name + ".conf", options);
             ConfigParseable jsonHandle = source.nameToParseable(name + ".json", options);
             ConfigParseable propsHandle = source.nameToParseable(name + ".properties", options);
@@ -180,6 +181,16 @@ class SimpleIncluder implements FullIncluder {
             ConfigSyntax syntax = options.getSyntax();
 
             obj = SimpleConfigObject.empty(SimpleConfigOrigin.newSimple(name));
+            if (syntax == null || syntax == ConfigSyntax.OAP) {
+                try {
+                    obj = oapHandle.parse(oapHandle.options().setAllowMissing(false)
+                            .setSyntax(ConfigSyntax.OAP));
+                    gotSomething = true;
+                } catch (ConfigException.IO e) {
+                    fails.add(e);
+                }
+            }
+
             if (syntax == null || syntax == ConfigSyntax.CONF) {
                 try {
                     obj = confHandle.parse(confHandle.options().setAllowMissing(false)
