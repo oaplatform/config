@@ -181,10 +181,10 @@ class SimpleIncluder implements FullIncluder {
             ConfigSyntax syntax = options.getSyntax();
 
             obj = SimpleConfigObject.empty(SimpleConfigOrigin.newSimple(name));
-            if (syntax == null || syntax == ConfigSyntax.OAP) {
+            if (syntax == null || syntax == ConfigSyntax.CONF) {
                 try {
                     obj = oapHandle.parse(oapHandle.options().setAllowMissing(false)
-                            .setSyntax(ConfigSyntax.OAP));
+                            .setSyntax(ConfigSyntax.CONF));
                     gotSomething = true;
                 } catch (ConfigException.IO e) {
                     fails.add(e);
