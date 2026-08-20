@@ -535,6 +535,8 @@ tree that you could have written (less conveniently) in JSON.
     there is a syntax `${?a.b}` to permit them to be missing.
   - `+=` syntax to append elements to arrays, `path += "/bin"`
   - multi-line strings with triple quotes as in Python or Scala
+  - (fork-only extension) YAML-style block arrays, `foo:\n  - a\n  - b`; see
+    [HOCON.md](HOCON.md#block-arrays-yaml-style)
 
 ### Examples of HOCON
 

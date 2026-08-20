@@ -413,13 +413,356 @@ final class ConfigDocumentParser {
             }
         }
 
+        // Parses "path <separator> value" (the shared shape of an ordinary object field and of
+        // a YAML-style block-array element/continuation line, see parseDashArray below) starting
+        // from the already-popped first token of the path.
+        private ConfigNodeField parseSingleField(Token keyToken) {
+            ArrayList<AbstractConfigNode> keyValueNodes = new ArrayList<AbstractConfigNode>();
+            ConfigNodePath path = parseKey(keyToken);
+            keyValueNodes.add(path);
+            Token afterKey = nextTokenCollectingWhitespace(keyValueNodes);
+            boolean insideEquals = false;
+
+            AbstractConfigNodeValue nextValue;
+            if (flavor == ConfigSyntax.CONF && afterKey == Tokens.OPEN_CURLY) {
+                // can omit the ':' or '=' before an object value
+                nextValue = parseValue(afterKey);
+            } else {
+                if (!isKeyValueSeparatorToken(afterKey)) {
+                    throw parseError(addQuoteSuggestion(afterKey.toString(),
+                            "Key '" + path.render() + "' may not be followed by token: "
+                                    + afterKey));
+                }
+
+                keyValueNodes.add(new ConfigNodeSingleToken(afterKey));
+
+                if (afterKey == Tokens.EQUALS) {
+                    insideEquals = true;
+                    equalsCount += 1;
+                }
+
+                BlockArrayContext blockArray = flavor != ConfigSyntax.JSON
+                        ? tryDetectDashArrayStart(keyValueNodes) : null;
+                if (blockArray != null) {
+                    nextValue = parseDashArray(blockArray.dashColumn, blockArray.contentColumn);
+                } else {
+                    nextValue = consolidateValues(keyValueNodes);
+                    if (nextValue == null) {
+                        nextValue = parseValue(nextTokenCollectingWhitespace(keyValueNodes));
+                    }
+                }
+            }
+
+            keyValueNodes.add(nextValue);
+            if (insideEquals) {
+                equalsCount -= 1;
+            }
+
+            return new ConfigNodeField(keyValueNodes);
+        }
+
+        // ---------------------------------------------------------------------------------
+        // YAML-style block-array support (HOCON.md, "Block arrays (YAML-style)"). Fork-only
+        // extension, gated to CONF syntax. See ADR-ish notes: since the tokenizer has no
+        // column-tracking of its own, indentation is measured transiently, per line, from the
+        // length of the leading IGNORED_WHITESPACE token (no tab expansion). A bare "-" only
+        // begins a block-array marker when immediately followed by whitespace, disambiguating
+        // it from a scalar value like "-item1" or a negative number "-5".
+        // ---------------------------------------------------------------------------------
+
+        private static final class BlockArrayContext {
+            final int dashColumn;
+            final int contentColumn;
+
+            BlockArrayContext(int dashColumn, int contentColumn) {
+                this.dashColumn = dashColumn;
+                this.contentColumn = contentColumn;
+            }
+        }
+
+        private static final class LineStart {
+            final int column;
+            final Token firstToken;
+
+            LineStart(int column, Token firstToken) {
+                this.column = column;
+                this.firstToken = firstToken;
+            }
+        }
+
+        private enum NextDashLine { SAME_LEVEL_DASH, CONTINUATION_FIELD, TERMINATE, END }
+
+        private Token peekToken(List<Token> peeked) {
+            Token t = nextToken();
+            peeked.add(t);
+            return t;
+        }
+
+        private void unpeek(List<Token> peeked) {
+            for (int i = peeked.size() - 1; i >= 0; i--) {
+                putBack(peeked.get(i));
+            }
+        }
+
+        private boolean isLineWhitespace(Token t) {
+            return Tokens.isIgnoredWhitespace(t) || isUnquotedWhitespace(t);
+        }
+
+        private boolean isDashMarker(Token t) {
+            return Tokens.isUnquotedText(t) && Tokens.getUnquotedText(t).equals("-");
+        }
+
+        // Peeks (recording into `peeked`) past any run of blank lines and comment-only lines
+        // (indented or not), stopping at the first token of the next substantive line. Never
+        // crosses Tokens.END.
+        private LineStart peekNextSubstantiveLine(List<Token> peeked) {
+            Token t = peekToken(peeked);
+            while (true) {
+                if (Tokens.isNewline(t)) {
+                    t = peekToken(peeked);
+                    continue;
+                }
+                if (t == Tokens.END) {
+                    return new LineStart(0, t);
+                }
+                if (Tokens.isComment(t)) {
+                    // comment-only line with no indentation
+                    t = peekToken(peeked);
+                    continue;
+                }
+                if (Tokens.isIgnoredWhitespace(t)) {
+                    int col = t.tokenText().length();
+                    Token next = peekToken(peeked);
+                    if (Tokens.isComment(next)) {
+                        // indented comment-only line
+                        t = peekToken(peeked);
+                        continue;
+                    }
+                    return new LineStart(col, next);
+                }
+                return new LineStart(0, t);
+            }
+        }
+
+        // Real (non-speculative) counterpart to peekNextSubstantiveLine: consumes the rest of
+        // the current line plus any blank/comment-only lines, landing the cursor at the start
+        // of the next substantive line. Caller must already know (via a prior speculative
+        // peek) that the current line does end here.
+        private int consumeToNextSubstantiveLine() {
+            Token t = nextToken();
+            while (isLineWhitespace(t) || Tokens.isComment(t)) {
+                t = nextToken();
+            }
+            lineNumber++;
+            t = nextToken();
+            while (true) {
+                if (Tokens.isNewline(t)) {
+                    lineNumber++;
+                    t = nextToken();
+                    continue;
+                }
+                if (Tokens.isComment(t)) {
+                    t = nextToken();
+                    continue;
+                }
+                if (Tokens.isIgnoredWhitespace(t)) {
+                    int col = t.tokenText().length();
+                    Token next = nextToken();
+                    if (Tokens.isComment(next)) {
+                        t = nextToken();
+                        continue;
+                    }
+                    putBack(next);
+                    return col;
+                }
+                putBack(t);
+                return 0;
+            }
+        }
+
+        private void consumeSameLevelDashMarker() {
+            consumeToNextSubstantiveLine(); // lands right before the "-"
+            nextToken(); // consume "-"
+            nextToken(); // consume the whitespace after "-"
+        }
+
+        private void consumeContinuationLine() {
+            consumeToNextSubstantiveLine(); // lands at the continuation field's first token
+        }
+
+        // Speculative: does the field value start with nothing but a newline, then (optionally
+        // more blank/comment lines, then) an indented "- " marker? On a match, consumes the
+        // tokens for real (into `nodes`) and returns the dash/content columns; on no match,
+        // fully restores the token stream and returns null.
+        private BlockArrayContext tryDetectDashArrayStart(Collection<AbstractConfigNode> nodes) {
+            List<Token> peeked = new ArrayList<Token>();
+
+            Token t = peekToken(peeked);
+            while (isLineWhitespace(t) || Tokens.isComment(t)) {
+                t = peekToken(peeked);
+            }
+            if (!Tokens.isNewline(t)) {
+                unpeek(peeked);
+                return null;
+            }
+
+            LineStart line = peekNextSubstantiveLine(peeked);
+            if (line.firstToken == Tokens.END || !isDashMarker(line.firstToken)) {
+                unpeek(peeked);
+                return null;
+            }
+
+            Token afterDash = peekToken(peeked);
+            if (!isLineWhitespace(afterDash)) {
+                // "-item1"/"-5"-shaped value: not a block-sequence marker
+                unpeek(peeked);
+                return null;
+            }
+
+            int contentColumn = line.column + 1 + afterDash.tokenText().length();
+
+            for (Token consumed : peeked) {
+                if (Tokens.isNewline(consumed)) {
+                    lineNumber++;
+                }
+                nodes.add(new ConfigNodeSingleToken(consumed));
+            }
+
+            return new BlockArrayContext(line.column, contentColumn);
+        }
+
+        // Speculative, same-line-only: does the current line (already positioned at a dash
+        // element's or continuation line's first content token) look like "path <sep> value"?
+        // Never crosses a NEWLINE.
+        private boolean dashLineLooksLikeKeyValue() {
+            List<Token> peeked = new ArrayList<Token>();
+
+            Token t = peekToken(peeked);
+            boolean sawPathToken = false;
+            while (Tokens.isValue(t) || Tokens.isUnquotedText(t)) {
+                if (!isLineWhitespace(t)) {
+                    sawPathToken = true;
+                }
+                t = peekToken(peeked);
+            }
+            while (isLineWhitespace(t) || Tokens.isComment(t)) {
+                t = peekToken(peeked);
+            }
+
+            boolean isKeyValue = sawPathToken
+                    && (isKeyValueSeparatorToken(t) || (flavor == ConfigSyntax.CONF && t == Tokens.OPEN_CURLY));
+
+            unpeek(peeked);
+            return isKeyValue;
+        }
+
+        // Classifies the next line relative to the current block array's dash/content columns,
+        // without consuming anything. Malformed/undefined indentation (anything not matching
+        // one of the three defined shapes) is a parse error rather than a best-effort guess.
+        private NextDashLine peekNextDashArrayLine(int dashColumn, int contentColumn) {
+            List<Token> peeked = new ArrayList<Token>();
+
+            Token t = peekToken(peeked);
+            while (isLineWhitespace(t) || Tokens.isComment(t)) {
+                t = peekToken(peeked);
+            }
+            if (!Tokens.isNewline(t)) {
+                unpeek(peeked);
+                return NextDashLine.TERMINATE;
+            }
+
+            LineStart line = peekNextSubstantiveLine(peeked);
+            if (line.firstToken == Tokens.END) {
+                unpeek(peeked);
+                return NextDashLine.END;
+            }
+
+            boolean isDash = false;
+            if (isDashMarker(line.firstToken)) {
+                Token afterDash = peekToken(peeked);
+                isDash = isLineWhitespace(afterDash);
+            }
+
+            unpeek(peeked);
+
+            if (line.column == dashColumn && isDash) {
+                return NextDashLine.SAME_LEVEL_DASH;
+            } else if (line.column == contentColumn && !isDash) {
+                return NextDashLine.CONTINUATION_FIELD;
+            } else if (line.column <= dashColumn && !isDash) {
+                return NextDashLine.TERMINATE;
+            } else {
+                throw parseError("Inconsistent indentation in YAML-style block array: line at column "
+                        + line.column + " (expected column " + dashColumn
+                        + " for a new '- ' element, column " + contentColumn
+                        + " for a continuation field aligned with the element's first key, or column "
+                        + dashColumn + " or less to end the array)");
+            }
+        }
+
+        // Parses one element of a block array: either "path <sep> value" (optionally continued
+        // by further "path <sep> value" lines aligned with the first key's column, merged into
+        // the same element's object, YAML block-mapping style) or, if the dash line isn't
+        // key/value-shaped, an ordinary value.
+        private AbstractConfigNode parseDashArrayElement(int dashColumn, int contentColumn) {
+            if (dashLineLooksLikeKeyValue()) {
+                ArrayList<AbstractConfigNode> fields = new ArrayList<AbstractConfigNode>();
+                fields.add(parseSingleField(nextToken()));
+
+                while (true) {
+                    NextDashLine kind = peekNextDashArrayLine(dashColumn, contentColumn);
+                    if (kind != NextDashLine.CONTINUATION_FIELD) {
+                        break;
+                    }
+                    consumeContinuationLine();
+                    if (!dashLineLooksLikeKeyValue()) {
+                        throw parseError("Expecting 'path = value' as a continuation line in a "
+                                + "YAML-style block array element");
+                    }
+                    fields.add(parseSingleField(nextToken()));
+                }
+
+                return new ConfigNodeObject(fields);
+            } else {
+                ArrayList<AbstractConfigNode> scratch = new ArrayList<AbstractConfigNode>();
+                AbstractConfigNodeValue v = consolidateValues(scratch);
+                if (v == null) {
+                    v = parseValue(nextTokenCollectingWhitespace(scratch));
+                }
+                return v;
+            }
+        }
+
+        // Entered right after tryDetectDashArrayStart has already consumed the first element's
+        // "<indent>- <whitespace>" marker; parses the whole block array as a bracket-less
+        // ConfigNodeArray, which ConfigParser.parseArray already walks generically.
+        private ConfigNodeComplexValue parseDashArray(int dashColumn, int contentColumn) {
+            ArrayList<AbstractConfigNode> elements = new ArrayList<AbstractConfigNode>();
+
+            while (true) {
+                elements.add(parseDashArrayElement(dashColumn, contentColumn));
+
+                NextDashLine kind = peekNextDashArrayLine(dashColumn, contentColumn);
+                if (kind == NextDashLine.SAME_LEVEL_DASH) {
+                    consumeSameLevelDashMarker();
+                } else if (kind == NextDashLine.TERMINATE || kind == NextDashLine.END) {
+                    break;
+                } else {
+                    // CONTINUATION_FIELD here would mean parseDashArrayElement failed to
+                    // consume a continuation line it saw - shouldn't happen.
+                    throw parseError("Inconsistent indentation in YAML-style block array");
+                }
+            }
+
+            return new ConfigNodeArray(elements);
+        }
+
         private ConfigNodeComplexValue parseObject(boolean hadOpenCurly) {
             // invoked just after the OPEN_CURLY (or START, if !hadOpenCurly)
             boolean afterComma = false;
             Path lastPath = null;
             boolean lastInsideEquals = false;
             ArrayList<AbstractConfigNode> objectNodes = new ArrayList<AbstractConfigNode>();
-            ArrayList<AbstractConfigNode> keyValueNodes;
             LinkedHashMap<String, Boolean> keys  = new LinkedHashMap<String, Boolean>();
             if (hadOpenCurly)
                 objectNodes.add(new ConfigNodeSingleToken(Tokens.OPEN_CURLY));
@@ -445,42 +788,9 @@ final class ConfigDocumentParser {
                     objectNodes.add(parseInclude(includeNodes));
                     afterComma = false;
                 } else {
-                    keyValueNodes = new ArrayList<AbstractConfigNode>();
-                    Token keyToken = t;
-                    ConfigNodePath path = parseKey(keyToken);
-                    keyValueNodes.add(path);
-                    Token afterKey = nextTokenCollectingWhitespace(keyValueNodes);
-                    boolean insideEquals = false;
-
-                    AbstractConfigNodeValue nextValue;
-                    if (flavor == ConfigSyntax.CONF && afterKey == Tokens.OPEN_CURLY) {
-                        // can omit the ':' or '=' before an object value
-                        nextValue = parseValue(afterKey);
-                    } else {
-                        if (!isKeyValueSeparatorToken(afterKey)) {
-                            throw parseError(addQuoteSuggestion(afterKey.toString(),
-                                    "Key '" + path.render() + "' may not be followed by token: "
-                                            + afterKey));
-                        }
-
-                        keyValueNodes.add(new ConfigNodeSingleToken(afterKey));
-
-                        if (afterKey == Tokens.EQUALS) {
-                            insideEquals = true;
-                            equalsCount += 1;
-                        }
-
-                        nextValue = consolidateValues(keyValueNodes);
-                        if (nextValue == null) {
-                            nextValue = parseValue(nextTokenCollectingWhitespace(keyValueNodes));
-                        }
-                    }
-
-                    keyValueNodes.add(nextValue);
-                    if (insideEquals) {
-                        equalsCount -= 1;
-                    }
-                    lastInsideEquals = insideEquals;
+                    ConfigNodeField field = parseSingleField(t);
+                    ConfigNodePath path = field.path();
+                    lastInsideEquals = field.separator() == Tokens.EQUALS;
 
                     String key = path.value().first();
                     Path remaining = path.value().remainder();
@@ -509,7 +819,7 @@ final class ConfigDocumentParser {
                     }
 
                     afterComma = false;
-                    objectNodes.add(new ConfigNodeField(keyValueNodes));
+                    objectNodes.add(field);
                 }
 
                 if (checkElementSeparator(objectNodes)) {
