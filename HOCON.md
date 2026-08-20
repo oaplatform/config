@@ -468,6 +468,47 @@ behavior is useful rather than surprising in cases like:
 
 Non-newline whitespace is never an element or field separator.
 
+### Block arrays (YAML-style)
+
+**This is a fork-only extension, not present in upstream lightbend/config, and only recognized
+when parsing HOCON/CONF syntax (never JSON).**
+
+In addition to the bracketed `[ a, b, c ]` array syntax above, a field's value may be a
+YAML-style block sequence: nothing but a newline, followed by one or more lines beginning with
+a `-` immediately followed by whitespace, all indented to the same column:
+
+    my_array:
+      - item1
+      - item2
+
+    my_object_array:
+      - field1.a = fg
+        field2 = 3
+
+`my_array` is `[ "item1", "item2" ]`. In `my_object_array`, a dash line that itself looks like
+`path <separator> value` starts an object instead of a plain value; a following line **aligned
+with the column where that first key started** (not merely deeper than the dash), with no
+leading dash, adds another field to that same element's object (YAML block-mapping style) — so
+`my_object_array` is `[ { field1.a: "fg", field2: 3 } ]`. A dash-array may itself be the value of
+such a field, nested arbitrarily deep. A `-` at the same column as the current dash starts the
+next element; a line at the dash's column or shallower that isn't a dash line ends the array and
+is parsed as whatever follows normally (the next field, a closing `}`, end of document, etc.).
+
+A `-` only begins a block-sequence marker when immediately followed by whitespace. `-item1` or a
+negative number like `-5` on the following line is an ordinary (string/number) value, exactly as
+without this feature — this mirrors YAML's own `-`-vs-scalar disambiguation rule.
+
+Indentation is a raw count of leading whitespace characters (no tab expansion), so mixing tabs
+and spaces between sibling lines is unreliable — use spaces consistently. Any indentation that
+doesn't match one of the shapes above — a continuation line indented to a column between the
+dash's own column and its content column, or a `-` at a column other than the current element
+list's column (i.e. a nested block sequence as a bare array element, `- - x`) — is a parse error
+rather than a best-effort guess; only a dash-array as a *keyed field's value* is supported.
+
+This syntax has no round-trip/format-preserving guarantee: editing a document through the
+`com.typesafe.config.parser` `ConfigDocument` API and rendering it back out is not guaranteed to
+reproduce the original dash/indentation layout for block arrays.
+
 ### Path expressions
 
 Path expressions are used to write out a path through the object
