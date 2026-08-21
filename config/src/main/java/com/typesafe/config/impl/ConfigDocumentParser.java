@@ -446,9 +446,15 @@ final class ConfigDocumentParser {
                 if (blockArray != null) {
                     nextValue = parseDashArray(blockArray.dashColumn, blockArray.contentColumn);
                 } else {
-                    nextValue = consolidateValues(keyValueNodes);
-                    if (nextValue == null) {
-                        nextValue = parseValue(nextTokenCollectingWhitespace(keyValueNodes));
+                    BlockObjectContext blockObject = flavor != ConfigSyntax.JSON
+                            ? tryDetectBlockObjectStart(keyValueNodes) : null;
+                    if (blockObject != null) {
+                        nextValue = parseBlockObject(blockObject.fieldColumn);
+                    } else {
+                        nextValue = consolidateValues(keyValueNodes);
+                        if (nextValue == null) {
+                            nextValue = parseValue(nextTokenCollectingWhitespace(keyValueNodes));
+                        }
                     }
                 }
             }
@@ -631,13 +637,12 @@ final class ConfigDocumentParser {
             return new BlockArrayContext(line.column, contentColumn);
         }
 
-        // Speculative, same-line-only: does the current line (already positioned at a dash
-        // element's or continuation line's first content token) look like "path <sep> value"?
-        // Never crosses a NEWLINE.
-        private boolean dashLineLooksLikeKeyValue() {
-            List<Token> peeked = new ArrayList<Token>();
-
-            Token t = peekToken(peeked);
+        // Speculative, same-line-only, starting from an already-peeked first token: does this
+        // line look like "path <sep> value"? Never crosses a NEWLINE. Continues appending to
+        // the caller's `peeked` list so the caller controls how much of the lookahead is kept
+        // vs. put back.
+        private boolean lineLooksLikeKeyValueFrom(Token firstToken, List<Token> peeked) {
+            Token t = firstToken;
             boolean sawPathToken = false;
             while (Tokens.isValue(t) || Tokens.isUnquotedText(t)) {
                 if (!isLineWhitespace(t)) {
@@ -649,9 +654,16 @@ final class ConfigDocumentParser {
                 t = peekToken(peeked);
             }
 
-            boolean isKeyValue = sawPathToken
+            return sawPathToken
                     && (isKeyValueSeparatorToken(t) || (flavor == ConfigSyntax.CONF && t == Tokens.OPEN_CURLY));
+        }
 
+        // Speculative, same-line-only: does the current line (already positioned at a dash
+        // element's or continuation line's first content token, or a block-object field's first
+        // token) look like "path <sep> value"? Never crosses a NEWLINE.
+        private boolean lineLooksLikeKeyValue() {
+            List<Token> peeked = new ArrayList<Token>();
+            boolean isKeyValue = lineLooksLikeKeyValueFrom(peekToken(peeked), peeked);
             unpeek(peeked);
             return isKeyValue;
         }
@@ -689,7 +701,7 @@ final class ConfigDocumentParser {
                 return NextDashLine.SAME_LEVEL_DASH;
             } else if (line.column == contentColumn && !isDash) {
                 return NextDashLine.CONTINUATION_FIELD;
-            } else if (line.column <= dashColumn && !isDash) {
+            } else if (line.column <= dashColumn) {
                 return NextDashLine.TERMINATE;
             } else {
                 throw parseError("Inconsistent indentation in YAML-style block array: line at column "
@@ -705,7 +717,7 @@ final class ConfigDocumentParser {
         // the same element's object, YAML block-mapping style) or, if the dash line isn't
         // key/value-shaped, an ordinary value.
         private AbstractConfigNode parseDashArrayElement(int dashColumn, int contentColumn) {
-            if (dashLineLooksLikeKeyValue()) {
+            if (lineLooksLikeKeyValue()) {
                 ArrayList<AbstractConfigNode> fields = new ArrayList<AbstractConfigNode>();
                 fields.add(parseSingleField(nextToken()));
 
@@ -715,7 +727,7 @@ final class ConfigDocumentParser {
                         break;
                     }
                     consumeContinuationLine();
-                    if (!dashLineLooksLikeKeyValue()) {
+                    if (!lineLooksLikeKeyValue()) {
                         throw parseError("Expecting 'path = value' as a continuation line in a "
                                 + "YAML-style block array element");
                     }
@@ -755,6 +767,130 @@ final class ConfigDocumentParser {
             }
 
             return new ConfigNodeArray(elements);
+        }
+
+        // ---------------------------------------------------------------------------------
+        // YAML-style block-object support (HOCON.md, "Block objects (YAML-style)"). Fork-only
+        // extension, gated to CONF syntax, sibling to the block-array support above: a field's
+        // value may be nothing but a newline followed by one or more "path <sep> value" lines,
+        // all indented to the same column, with no dash and no braces. Nesting (block objects
+        // inside block objects, inside dash-array elements or vice versa) falls out for free
+        // since each nested field's value is parsed by a fresh, independent call to
+        // parseSingleField.
+        // ---------------------------------------------------------------------------------
+
+        private static final class BlockObjectContext {
+            final int fieldColumn;
+
+            BlockObjectContext(int fieldColumn) {
+                this.fieldColumn = fieldColumn;
+            }
+        }
+
+        private enum NextBlockObjectLine { SAME_LEVEL_FIELD, TERMINATE, END }
+
+        // Speculative: does the field value start with nothing but a newline, then (optionally
+        // more blank/comment lines, then) a "path <sep> value"-shaped line that isn't a dash
+        // marker? On a match, consumes only the newline/indentation prefix for real (into
+        // `nodes`) and returns the field's column, putting back the field's own first token (and
+        // anything peeked while checking its shape) so it's available for real consumption by
+        // the caller. On no match, fully restores the token stream and returns null.
+        private BlockObjectContext tryDetectBlockObjectStart(Collection<AbstractConfigNode> nodes) {
+            List<Token> peeked = new ArrayList<Token>();
+
+            Token t = peekToken(peeked);
+            while (isLineWhitespace(t) || Tokens.isComment(t)) {
+                t = peekToken(peeked);
+            }
+            if (!Tokens.isNewline(t)) {
+                unpeek(peeked);
+                return null;
+            }
+
+            LineStart line = peekNextSubstantiveLine(peeked);
+            if (line.firstToken == Tokens.END || isDashMarker(line.firstToken)) {
+                unpeek(peeked);
+                return null;
+            }
+
+            int prefixLength = peeked.size() - 1; // index of line.firstToken within `peeked`
+
+            if (!lineLooksLikeKeyValueFrom(line.firstToken, peeked)) {
+                unpeek(peeked);
+                return null;
+            }
+
+            for (int i = 0; i < prefixLength; i++) {
+                Token consumed = peeked.get(i);
+                if (Tokens.isNewline(consumed)) {
+                    lineNumber++;
+                }
+                nodes.add(new ConfigNodeSingleToken(consumed));
+            }
+            for (int i = peeked.size() - 1; i >= prefixLength; i--) {
+                putBack(peeked.get(i));
+            }
+
+            return new BlockObjectContext(line.column);
+        }
+
+        // Classifies the next line relative to the current block object's field column, without
+        // consuming anything. A line strictly deeper than fieldColumn that doesn't line up as a
+        // continuation of anything is a parse error rather than a best-effort guess.
+        private NextBlockObjectLine peekNextBlockObjectLine(int fieldColumn) {
+            List<Token> peeked = new ArrayList<Token>();
+
+            Token t = peekToken(peeked);
+            while (isLineWhitespace(t) || Tokens.isComment(t)) {
+                t = peekToken(peeked);
+            }
+            if (!Tokens.isNewline(t)) {
+                unpeek(peeked);
+                return NextBlockObjectLine.TERMINATE;
+            }
+
+            LineStart line = peekNextSubstantiveLine(peeked);
+            if (line.firstToken == Tokens.END) {
+                unpeek(peeked);
+                return NextBlockObjectLine.END;
+            }
+
+            unpeek(peeked);
+
+            if (line.column == fieldColumn) {
+                return NextBlockObjectLine.SAME_LEVEL_FIELD;
+            } else if (line.column <= fieldColumn) {
+                return NextBlockObjectLine.TERMINATE;
+            } else {
+                throw parseError("Inconsistent indentation in YAML-style nested field block: line at column "
+                        + line.column + " (expected column " + fieldColumn
+                        + " for another field in this block, or column " + fieldColumn
+                        + " or less to end the block)");
+            }
+        }
+
+        // Entered right after tryDetectBlockObjectStart has already consumed the newline and
+        // indentation before the first field's key; parses the whole indented block as a
+        // brace-less ConfigNodeObject.
+        private ConfigNodeComplexValue parseBlockObject(int fieldColumn) {
+            ArrayList<AbstractConfigNode> fields = new ArrayList<AbstractConfigNode>();
+
+            while (true) {
+                if (!lineLooksLikeKeyValue()) {
+                    throw parseError("Expecting 'path = value' as a field in a "
+                            + "YAML-style nested field block");
+                }
+                fields.add(parseSingleField(nextToken()));
+
+                NextBlockObjectLine kind = peekNextBlockObjectLine(fieldColumn);
+                if (kind == NextBlockObjectLine.SAME_LEVEL_FIELD) {
+                    consumeToNextSubstantiveLine();
+                } else {
+                    break;
+                }
+            }
+
+            return new ConfigNodeObject(fields);
         }
 
         private ConfigNodeComplexValue parseObject(boolean hadOpenCurly) {
