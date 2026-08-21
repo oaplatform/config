@@ -301,6 +301,12 @@ final class Tokenizer {
         // chars that stop an unquoted string
         static final String notInUnquotedText = "$\"{}[]:=,+#`^?!@*&\\";
 
+        // ' only stops unquoted text in CONF flavor (allowComments), where it opens a
+        // single-quoted string; in JSON flavor it stays an ordinary unquoted char.
+        private boolean isReservedChar(int c) {
+            return notInUnquotedText.indexOf(c) >= 0 || (allowComments && c == '\'');
+        }
+
         // The rules here are intended to maximize convenience while
         // avoiding confusion with real valid JSON. Basically anything
         // that parses as JSON is treated the JSON way and otherwise
@@ -312,7 +318,7 @@ final class Tokenizer {
             while (true) {
                 if (c == -1) {
                     break;
-                } else if (notInUnquotedText.indexOf(c) >= 0) {
+                } else if (isReservedChar(c)) {
                     break;
                 } else if (isWhitespace(c)) {
                     break;
@@ -373,7 +379,7 @@ final class Tokenizer {
             } catch (NumberFormatException e) {
                 // not a number after all, see if it's an unquoted string.
                 for (char u : s.toCharArray()) {
-                    if (notInUnquotedText.indexOf(u) >= 0)
+                    if (isReservedChar(u))
                         throw problem(asString(u), "Reserved character '" + asString(u)
                                       + "' is not allowed outside quotes", true /* suggestQuotes */);
                 }
@@ -396,6 +402,9 @@ final class Tokenizer {
             switch (escaped) {
             case '"':
                 sb.append('"');
+                break;
+            case '\'':
+                sb.append('\'');
                 break;
             case '\\':
                 sb.append('\\');
@@ -446,14 +455,14 @@ final class Tokenizer {
             }
         }
 
-        private void appendTripleQuotedString(StringBuilder sb, StringBuilder sbOrig) throws ProblemException {
+        private void appendTripleQuotedString(StringBuilder sb, StringBuilder sbOrig, char quoteChar) throws ProblemException {
             // we are after the opening triple quote and need to consume the
             // close triple
             int consecutiveQuotes = 0;
             for (;;) {
                 int c = nextCharRaw();
 
-                if (c == '"') {
+                if (c == quoteChar) {
                     consecutiveQuotes += 1;
                 } else if (consecutiveQuotes >= 3) {
                     // the last three quotes end the string and the others are
@@ -477,7 +486,7 @@ final class Tokenizer {
             }
         }
 
-        private Token pullQuotedString() throws ProblemException {
+        private Token pullQuotedString(char quoteChar) throws ProblemException {
             // the open quote has already been consumed
             StringBuilder sb = new StringBuilder();
 
@@ -486,7 +495,7 @@ final class Tokenizer {
             // which means we will need a new StringBuilder to escape escape characters
             // so we can also keep the actual value of the string. This is gross.
             StringBuilder sbOrig = new StringBuilder();
-            sbOrig.appendCodePoint('"');
+            sbOrig.appendCodePoint(quoteChar);
 
             while (true) {
                 int c = nextCharRaw();
@@ -495,7 +504,7 @@ final class Tokenizer {
 
                 if (c == '\\') {
                     pullEscapeSequence(sb, sbOrig);
-                } else if (c == '"') {
+                } else if (c == quoteChar) {
                     sbOrig.appendCodePoint(c);
                     break;
                 } else if (ConfigImplUtil.isC0Control(c)) {
@@ -510,9 +519,9 @@ final class Tokenizer {
             // maybe switch to triple-quoted string, sort of hacky...
             if (sb.length() == 0) {
                 int third = nextCharRaw();
-                if (third == '"') {
+                if (third == quoteChar) {
                     sbOrig.appendCodePoint(third);
-                    appendTripleQuotedString(sb, sbOrig);
+                    appendTripleQuotedString(sb, sbOrig, quoteChar);
                 } else {
                     putBack(third);
                 }
@@ -592,7 +601,7 @@ final class Tokenizer {
                 } else {
                     switch (c) {
                     case '"':
-                        t = pullQuotedString();
+                        t = pullQuotedString('"');
                         break;
                     case '$':
                         t = pullSubstitution();
@@ -629,7 +638,9 @@ final class Tokenizer {
                     if (t == null) {
                         if (firstNumberChars.indexOf(c) >= 0) {
                             t = pullNumber(c);
-                        } else if (notInUnquotedText.indexOf(c) >= 0) {
+                        } else if (allowComments && c == '\'') {
+                            t = pullQuotedString('\'');
+                        } else if (isReservedChar(c)) {
                             throw problem(asString(c), "Reserved character '" + asString(c)
                                     + "' is not allowed outside quotes", true /* suggestQuotes */);
                         } else {
