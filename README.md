@@ -541,6 +541,8 @@ tree that you could have written (less conveniently) in JSON.
     `'a.d' = ad`; see [HOCON.md](HOCON.md#single-quoted-strings)
   - (fork-only extension) YAML-style block objects, `a:\n  v:\n    c = 5\n    d = 6`; see
     [HOCON.md](HOCON.md#block-objects-yaml-style)
+  - (fork-only extension) YAML-style block scalars, `a: |\n  line one\n  line two` (literal `|`
+    and folded `>`, with `-`/`+` chomping); see [HOCON.md](HOCON.md#block-scalars-yaml-style)
 
 ### Examples of HOCON
 
