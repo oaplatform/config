@@ -21,6 +21,8 @@
       - [Array and object concatenation](#array-and-object-concatenation)
       - [Note: Concatenation with whitespace and substitutions](#note-concatenation-with-whitespace-and-substitutions)
       - [Note: Arrays without commas or newlines](#note-arrays-without-commas-or-newlines)
+    - [Block arrays (YAML-style)](#block-arrays-yaml-style)
+    - [Block objects (YAML-style)](#block-objects-yaml-style)
     - [Path expressions](#path-expressions)
     - [Paths as keys](#paths-as-keys)
     - [Substitutions](#substitutions)
@@ -531,8 +533,11 @@ with the column where that first key started** (not merely deeper than the dash)
 leading dash, adds another field to that same element's object (YAML block-mapping style) — so
 `my_object_array` is `[ { field1.a: "fg", field2: 3 } ]`. A dash-array may itself be the value of
 such a field, nested arbitrarily deep. A `-` at the same column as the current dash starts the
-next element; a line at the dash's column or shallower that isn't a dash line ends the array and
-is parsed as whatever follows normally (the next field, a closing `}`, end of document, etc.).
+next element; a line at the dash's column or shallower — dash or not — ends the array. If that
+line is itself a `-` line, it isn't part of *this* array (its own dash column is shallower), so
+it's re-parsed by whichever enclosing level actually owns that column, e.g. as the next element
+of an outer array a nested one is a field value of. Otherwise it's parsed as whatever follows
+normally (the next field, a closing `}`, end of document, etc.).
 
 A `-` only begins a block-sequence marker when immediately followed by whitespace. `-item1` or a
 negative number like `-5` on the following line is an ordinary (string/number) value, exactly as
@@ -541,13 +546,45 @@ without this feature — this mirrors YAML's own `-`-vs-scalar disambiguation ru
 Indentation is a raw count of leading whitespace characters (no tab expansion), so mixing tabs
 and spaces between sibling lines is unreliable — use spaces consistently. Any indentation that
 doesn't match one of the shapes above — a continuation line indented to a column between the
-dash's own column and its content column, or a `-` at a column other than the current element
+dash's own column and its content column, or a `-` at a column *deeper* than the current element
 list's column (i.e. a nested block sequence as a bare array element, `- - x`) — is a parse error
-rather than a best-effort guess; only a dash-array as a *keyed field's value* is supported.
+rather than a best-effort guess; only a dash-array as a *keyed field's value* is supported. A `-`
+at a column *shallower* than the current list's column is not an error — see above, it ends this
+array and belongs to an enclosing one.
 
 This syntax has no round-trip/format-preserving guarantee: editing a document through the
 `com.typesafe.config.parser` `ConfigDocument` API and rendering it back out is not guaranteed to
 reproduce the original dash/indentation layout for block arrays.
+
+### Block objects (YAML-style)
+
+**This is a fork-only extension, not present in upstream lightbend/config, and only recognized
+when parsing HOCON/CONF syntax (never JSON).**
+
+A field's value may also be a YAML-style block mapping: nothing but a newline, followed by one or
+more `path <separator> value` lines, all indented to the same column, with no dash and no braces:
+
+    a:
+      v:
+        c = 5
+        d = 6
+
+This is equivalent to `a { v { c = 5, d = 6 } }`, i.e. `a.v.c` is `5` and `a.v.d` is `6`. Each
+field's own value may in turn be another block object (arbitrarily nested), a bracketed/dash-array
+value, a braced object, or an ordinary scalar — nesting works the same way it does for the rest of
+HOCON, since each field is parsed independently. A block object and a block array (see above) may
+nest inside one another freely: a dash-array element's field may be a block object, and a block
+object's field may be a dash array.
+
+A following line **at the same column as the block's first field** adds another field to the same
+object; a line at that column or shallower ends the block (and, if it's itself a valid field or
+dash line, is re-parsed by whichever enclosing level owns that column) — exactly the same
+termination rule as block arrays. Indentation is a raw count of leading whitespace characters (no
+tab expansion), so mixing tabs and spaces between sibling lines is unreliable — use spaces
+consistently. A line indented strictly deeper than the block's column, that doesn't belong to one
+of its fields' own (recursively parsed) values, is a parse error rather than a best-effort guess.
+
+This syntax has no round-trip/format-preserving guarantee, same caveat as block arrays.
 
 ### Path expressions
 
