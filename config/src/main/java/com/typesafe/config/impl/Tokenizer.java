@@ -77,6 +77,10 @@ final class Tokenizer {
                 whitespace.appendCodePoint(c);
             }
 
+            int length() {
+                return whitespace.length();
+            }
+
             Token check(Token t, ConfigOrigin baseOrigin, int lineNumber) {
                 if (isSimpleValue(t)) {
                     return nextIsASimpleValue(baseOrigin, lineNumber);
@@ -132,6 +136,13 @@ final class Tokenizer {
         final private Queue<Token> tokens;
         final private WhitespaceSaver whitespaceSaver;
         final private boolean allowComments;
+        // Column (raw character count, no tab expansion) of the first real token on the
+        // current line; used only to anchor YAML-style block-scalar indentation (see
+        // pullBlockScalarHeaderChar). Updated once per line, when its first non-blank
+        // token is produced; untouched by blank/comment-only lines so it always reflects
+        // the most recent substantive line's own start column.
+        private int currentLineIndent;
+        private boolean atLineStart;
 
         TokenIterator(ConfigOrigin origin, Reader input, boolean allowComments) {
             this.origin = (SimpleConfigOrigin) origin;
@@ -143,6 +154,8 @@ final class Tokenizer {
             tokens = new LinkedList<Token>();
             tokens.add(Tokens.START);
             whitespaceSaver = new WhitespaceSaver();
+            currentLineIndent = 0;
+            atLineStart = true;
         }
 
 
@@ -170,6 +183,20 @@ final class Tokenizer {
                         "bug: putBack() three times, undesirable look-ahead");
             }
             buffer.push(c);
+        }
+
+        // YAML-style block-scalar header detection needs deeper, bounded lookahead (up to
+        // one line's worth of characters) than putBack()'s 2-element assertion allows for.
+        // These push directly onto the same buffer, bypassing that bug-guard deliberately:
+        // it exists to catch accidental unbounded lookahead elsewhere, not as a hard limit.
+        private void pushBackRaw(int c) {
+            buffer.push(c);
+        }
+
+        private void pushBackAll(List<Integer> consumedInOrder) {
+            for (int i = consumedInOrder.size() - 1; i >= 0; i--) {
+                pushBackRaw(consumedInOrder.get(i));
+            }
         }
 
         static boolean isWhitespace(int c) {
@@ -530,6 +557,183 @@ final class Tokenizer {
             return Tokens.newString(lineOrigin, sb.toString(), sbOrig.toString());
         }
 
+        // ---------------------------------------------------------------------------------
+        // YAML-style block-scalar support (HOCON.md, "Block scalars (YAML-style)"). Fork-only
+        // extension, gated to CONF syntax (allowComments). Unlike the block-array/block-object
+        // extensions in ConfigDocumentParser, this one must live entirely here at the character
+        // level: a block scalar's body is arbitrary raw text (a '#' inside it must not start a
+        // comment, quotes/'$'/etc. must stay literal), so it cannot be produced by running the
+        // body through normal HOCON tokenization. This mirrors how triple-quoted strings
+        // (appendTripleQuotedString) are handled: raw nextCharRaw() reads, not pullNextToken().
+        // ---------------------------------------------------------------------------------
+
+        // headerChar ('|' or '>') has already been consumed. currentLineIndent still reflects
+        // this line's own start column (the key's column, for an ordinary "key: |" line) -
+        // capture it immediately as the indentation anchor. Speculatively reads ahead (raw) for
+        // an optional '-'/'+' chomp indicator followed by nothing but whitespace up to the next
+        // newline/EOF; if that shape matches, this is a confirmed block-scalar header and we
+        // hand off to pullBlockScalarBody. Otherwise every speculatively-read char (including
+        // headerChar itself) is restored and we fall back to ordinary pullUnquotedText(),
+        // reproducing today's behavior exactly (e.g. "foo = |bar", "foo = | bar").
+        private Token pullBlockScalarHeaderChar(char headerChar) throws ProblemException {
+            int parentIndent = currentLineIndent;
+            ConfigOrigin headerOrigin = lineOrigin;
+
+            List<Integer> consumed = new ArrayList<Integer>();
+
+            int c = nextCharRaw();
+            char chomp = 0;
+            if (c == '-' || c == '+') {
+                chomp = (char) c;
+                consumed.add(c);
+                c = nextCharRaw();
+            }
+
+            while (c != -1 && c != '\n' && isWhitespaceNotNewline(c)) {
+                consumed.add(c);
+                c = nextCharRaw();
+            }
+
+            if (c == -1 || c == '\n') {
+                // Confirmed header: only the terminator needs to go back, so
+                // pullBlockScalarBody's own consumption sees it first.
+                pushBackRaw(c);
+                return pullBlockScalarBody(headerChar, chomp, parentIndent, headerOrigin);
+            } else {
+                consumed.add(c);
+                pushBackAll(consumed);
+                pushBackRaw(headerChar);
+                return pullUnquotedText();
+            }
+        }
+
+        // Entered right after pullBlockScalarHeaderChar has confirmed the header and pushed
+        // back the header line's own terminator (newline or EOF). Reads the block body raw,
+        // line by line, never going through pullNextToken, so the body's content is never
+        // interpreted as HOCON syntax.
+        private Token pullBlockScalarBody(char style, char chomp, int parentIndent, ConfigOrigin headerOrigin)
+                throws ProblemException {
+            int term = nextCharRaw();
+            if (term == '\n') {
+                lineNumber += 1;
+                lineOrigin = origin.withLineNumber(lineNumber);
+            }
+
+            List<String> lines = new ArrayList<String>();
+            int baseIndent = -1;
+
+            if (term != -1) {
+                lineScan:
+                while (true) {
+                    List<Integer> indentChars = new ArrayList<Integer>();
+                    int c = nextCharRaw();
+                    while (c != -1 && c != '\n' && isWhitespaceNotNewline(c)) {
+                        indentChars.add(c);
+                        c = nextCharRaw();
+                    }
+
+                    if (c == -1 || c == '\n') {
+                        // blank line
+                        if (baseIndent >= 0) {
+                            lines.add("");
+                        } // else: a blank line before any content line - dropped (documented
+                          // simplification, see HOCON.md)
+                        if (c == '\n') {
+                            lineNumber += 1;
+                            lineOrigin = origin.withLineNumber(lineNumber);
+                            continue;
+                        } else {
+                            break lineScan;
+                        }
+                    }
+
+                    int col = indentChars.size();
+                    if (col <= parentIndent) {
+                        // Belongs to whatever follows the block scalar, not to its body.
+                        // The '\n' that separated it from the previous (real) line was
+                        // already consumed for real above; put it back too (adjusting
+                        // lineNumber to match) so normal tokenizing sees the newline
+                        // token it needs as an implicit field separator.
+                        lineNumber -= 1;
+                        lineOrigin = origin.withLineNumber(lineNumber);
+                        List<Integer> restore = new ArrayList<Integer>();
+                        restore.add((int) '\n');
+                        restore.addAll(indentChars);
+                        restore.add(c);
+                        pushBackAll(restore);
+                        break lineScan;
+                    }
+
+                    if (baseIndent < 0) {
+                        baseIndent = col;
+                    } else if (col < baseIndent) {
+                        throw problem(headerOrigin, "Inconsistent indentation in YAML-style block scalar: line at column "
+                                + col + " (expected column " + baseIndent + " or more)");
+                    }
+
+                    StringBuilder lineText = new StringBuilder();
+                    int overhang = col - baseIndent;
+                    for (int i = indentChars.size() - overhang; i < indentChars.size(); i++) {
+                        lineText.appendCodePoint(indentChars.get(i));
+                    }
+                    lineText.appendCodePoint(c);
+                    int rc = nextCharRaw();
+                    while (rc != -1 && rc != '\n') {
+                        lineText.appendCodePoint(rc);
+                        rc = nextCharRaw();
+                    }
+                    lines.add(lineText.toString());
+
+                    if (rc == '\n') {
+                        lineNumber += 1;
+                        lineOrigin = origin.withLineNumber(lineNumber);
+                    } else {
+                        break lineScan;
+                    }
+                }
+            }
+
+            String content;
+            if (lines.isEmpty()) {
+                content = "";
+            } else {
+                int contentLines = lines.size();
+                while (contentLines > 0 && lines.get(contentLines - 1).isEmpty()) {
+                    contentLines--;
+                }
+                if (chomp == '-') {
+                    content = joinBlockLines(style, lines, 0, contentLines);
+                } else if (chomp == '+') {
+                    content = joinBlockLines(style, lines, 0, lines.size()) + "\n";
+                } else {
+                    content = contentLines > 0 ? joinBlockLines(style, lines, 0, contentLines) + "\n" : "";
+                }
+            }
+
+            return Tokens.newString(headerOrigin, content, content);
+        }
+
+        // style '|' (literal): lines joined with '\n'. style '>' (folded, simplified from full
+        // YAML - see HOCON.md): consecutive non-blank lines are joined with a single space; a
+        // blank-line neighbor forces '\n' instead. Unlike full YAML, extra indentation within a
+        // line ("more-indented" lines) doesn't get special folding treatment.
+        private static String joinBlockLines(char style, List<String> lines, int from, int to) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = from; i < to; i++) {
+                sb.append(lines.get(i));
+                if (i == to - 1)
+                    break;
+                if (style == '|') {
+                    sb.append('\n');
+                } else {
+                    boolean thisBlank = lines.get(i).isEmpty();
+                    boolean nextBlank = lines.get(i + 1).isEmpty();
+                    sb.append((thisBlank || nextBlank) ? '\n' : ' ');
+                }
+            }
+            return sb.toString();
+        }
+
         private Token pullPlusEquals() throws ProblemException {
             // the initial '+' has already been consumed
             int c = nextCharRaw();
@@ -586,6 +790,10 @@ final class Tokenizer {
 
         private Token pullNextToken(WhitespaceSaver saver) throws ProblemException {
             int c = nextCharAfterWhitespace(saver);
+            if (atLineStart && c != '\n' && c != -1) {
+                currentLineIndent = saver.length();
+                atLineStart = false;
+            }
             if (c == -1) {
                 return Tokens.END;
             } else if (c == '\n') {
@@ -593,6 +801,7 @@ final class Tokenizer {
                 Token line = Tokens.newLine(lineOrigin);
                 lineNumber += 1;
                 lineOrigin = origin.withLineNumber(lineNumber);
+                atLineStart = true;
                 return line;
             } else {
                 Token t;
@@ -640,6 +849,8 @@ final class Tokenizer {
                             t = pullNumber(c);
                         } else if (allowComments && c == '\'') {
                             t = pullQuotedString('\'');
+                        } else if (allowComments && (c == '|' || c == '>')) {
+                            t = pullBlockScalarHeaderChar((char) c);
                         } else if (isReservedChar(c)) {
                             throw problem(asString(c), "Reserved character '" + asString(c)
                                     + "' is not allowed outside quotes", true /* suggestQuotes */);

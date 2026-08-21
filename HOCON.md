@@ -23,6 +23,7 @@
       - [Note: Arrays without commas or newlines](#note-arrays-without-commas-or-newlines)
     - [Block arrays (YAML-style)](#block-arrays-yaml-style)
     - [Block objects (YAML-style)](#block-objects-yaml-style)
+    - [Block scalars (YAML-style)](#block-scalars-yaml-style)
     - [Path expressions](#path-expressions)
     - [Paths as keys](#paths-as-keys)
     - [Substitutions](#substitutions)
@@ -585,6 +586,63 @@ consistently. A line indented strictly deeper than the block's column, that does
 of its fields' own (recursively parsed) values, is a parse error rather than a best-effort guess.
 
 This syntax has no round-trip/format-preserving guarantee, same caveat as block arrays.
+
+### Block scalars (YAML-style)
+
+**This is a fork-only extension, not present in upstream lightbend/config, and only recognized
+when parsing HOCON/CONF syntax (never JSON).**
+
+A field's value may be a YAML-style block scalar: a `|` (literal) or `>` (folded) header, alone on
+its line (only whitespace may follow it), optionally suffixed with a chomping indicator (`-`
+strip, `+` keep; no suffix means the default, "clip"), followed by an indented block of raw text:
+
+    description: |
+      line one
+      line two
+
+    summary: >
+      folded
+      onto one line
+
+    raw: |-
+      no trailing newline
+
+`description` is `"line one\nline two\n"`. In **literal** (`|`) style, line breaks inside the
+block are kept as-is. In **folded** (`>`) style, a line break between two non-blank lines becomes
+a single space instead, while a blank line becomes a line break — so `summary` is
+`"folded onto one line\n"`.
+
+Unlike block arrays/objects above, a block scalar's content is **not** parsed as HOCON at all: it
+is read as raw text, so `#`, quotes, `$`, `{`/`}`, etc. inside the block are all literal and have
+no special meaning. The block's indentation is auto-detected from its first non-blank line, and
+that many leading whitespace characters are stripped from every line in the block; any extra
+indentation beyond that is kept as literal leading whitespace. A line indented less than the
+block's own field is *not* part of the block (see "Trailing newlines" below for how the block
+ends); a non-blank line indented more than the field but less than the detected block indent is a
+parse error ("inconsistent indentation"), matching the block-array/block-object error style.
+
+**Trailing newlines ("chomping")**: by default (**clip**, no suffix) the result ends with exactly
+one newline, and any extra trailing blank lines in the source are dropped. `|-`/`>-` (**strip**)
+drops the trailing newline entirely. `|+`/`>+` (**keep**) preserves all trailing blank lines
+verbatim, plus a final newline.
+
+Simplifications versus full YAML (documented, not planned to be closed):
+
+- No explicit indentation-indicator digit (e.g. `|2`) — indentation is always auto-detected from
+  the first non-blank content line.
+- No tab expansion for indentation, same limitation as block arrays/objects.
+- Leading blank lines *before* the first non-blank content line are dropped rather than preserved.
+- Folded style doesn't give "more-indented" lines special treatment the way full YAML does; extra
+  indentation is kept as literal characters but doesn't by itself force a line break.
+- Detection is purely lexical — a bare `|`/`>`[`-`/`+`] alone on a line always starts a block
+  scalar, regardless of whether it's really in value position (mirrors the existing dash-array
+  marker precedent). If `foo = |` was meant as a literal one-character string, quote it:
+  `foo = "|"`.
+- No round-trip/format-preserving guarantee through the `com.typesafe.config.parser`
+  `ConfigDocument` API, same caveat as block arrays/objects.
+
+A block scalar may be nested inside a block array element's field or a block object's field (and
+vice versa) exactly like any other value.
 
 ### Path expressions
 
