@@ -537,6 +537,8 @@ tree that you could have written (less conveniently) in JSON.
   - multi-line strings with triple quotes as in Python or Scala
   - (fork-only extension) YAML-style block arrays, `foo:\n  - a\n  - b`; see
     [HOCON.md](HOCON.md#block-arrays-yaml-style)
+  - (fork-only extension) single-quoted strings as an alternative to double-quoted,
+    `'a.d' = ad`; see [HOCON.md](HOCON.md#single-quoted-strings)
 
 ### Examples of HOCON
 

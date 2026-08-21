@@ -15,6 +15,7 @@
     - [Duplicate keys and object merging](#duplicate-keys-and-object-merging)
     - [Unquoted strings](#unquoted-strings)
     - [Multi-line strings](#multi-line-strings)
+    - [Single-quoted strings](#single-quoted-strings)
     - [Value concatenation](#value-concatenation)
       - [String value concatenation](#string-value-concatenation)
       - [Array and object concatenation](#array-and-object-concatenation)
@@ -243,7 +244,10 @@ value if:
 
  - it does not contain "forbidden characters": '$', '"', '{', '}',
    '[', ']', ':', '=', ',', '+', '#', '`', '^', '?', '!', '@',
-   '*', '&', '\' (backslash), or whitespace.
+   '*', '&', '\' (backslash), or whitespace. (Fork extension, CONF
+   flavor only: `'` is also forbidden, since it opens a single-quoted
+   string — see [Single-quoted strings](#single-quoted-strings). In
+   JSON flavor `'` is not special and stays an ordinary unquoted char.)
  - it does not contain the two-character string "//" (which
    starts a comment)
  - its initial characters do not parse as `true`, `false`, `null`,
@@ -299,6 +303,42 @@ followed by a dangling unbalanced quote). In Scala, it is a
 four-character string `foo"`. HOCON works like Scala; any sequence
 of at least three quotes ends the multi-line string, and any
 "extra" quotes are part of the string.
+
+### Single-quoted strings
+
+(Fork-only extension, not present in upstream lightbend/config. CONF
+flavor only; in JSON flavor `'` is not special and behaves exactly
+as plain JSON, i.e. it's just an ordinary character inside an
+unquoted string, and is not itself valid JSON.)
+
+A string may be quoted with `'` instead of `"`. A single-quoted
+string is a drop-in alternative to a double-quoted string: it
+supports the same backslash escape sequences (`\n`, `\t`, `\\`,
+`\"`, `\uXXXX`, etc.), plus `\'` to embed a literal single quote.
+`\'` is additionally accepted inside a double-quoted string, for
+symmetry. Three single quotes in a row, `'''`, open a raw
+multi-line string exactly like `"""`, ended by the next `'''`
+(any "extra" quotes beyond three are part of the string, same rule
+as `"""`).
+
+Like double-quoted strings, any periods inside a single-quoted
+string are literal and do not act as path separators (see
+[Paths as keys](#paths-as-keys)) — this is the main reason to use
+single quotes: writing a key that contains a `.` without it being
+expanded into a nested object, as an alternative spelling of a
+double-quoted key.
+
+```
+"a.b" = ab      # already valid HOCON: literal key "a.b"
+'a.d' = ad      # single-quoted: also a literal key, "a.d"
+a.b.c = d       # unquoted: a path expression, expands to a: { b: { c: d } }
+```
+
+resolves to:
+
+```json
+{ "a.b": "ab", "a.d": "ad", "a": { "b": { "c": "d" } } }
+```
 
 ### Value concatenation
 

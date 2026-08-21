@@ -193,6 +193,81 @@ public class BlockArrayParserTest {
     }
 
     @Test
+    public void singleElementArray() {
+        Config c = parseConf("arr:\n  - only\n");
+        assertEquals(java.util.Collections.singletonList("only"), c.getStringList("arr"));
+    }
+
+    @Test
+    public void blankLinesBetweenElementsAreAllowed() {
+        Config c = parseConf(
+                "arr:\n" +
+                "  - a\n" +
+                "\n" +
+                "  - b\n");
+        assertEquals(java.util.Arrays.asList("a", "b"), c.getStringList("arr"));
+    }
+
+    @Test
+    public void arrayAsLastContentWithNoTrailingNewline() {
+        Config c = parseConf(
+                "arr:\n" +
+                "  - a\n" +
+                "  - b");
+        assertEquals(java.util.Arrays.asList("a", "b"), c.getStringList("arr"));
+    }
+
+    @Test
+    public void bracketArrayAsDashElementValue() {
+        Config c = parseConf(
+                "arr:\n" +
+                "  - [1, 2]\n" +
+                "  - [3, 4]\n");
+        List<? extends Object> raw = c.getAnyRefList("arr");
+        assertEquals(java.util.Arrays.asList(1, 2), raw.get(0));
+        assertEquals(java.util.Arrays.asList(3, 4), raw.get(1));
+    }
+
+    @Test
+    public void inlineBraceObjectAsDashElementValue() {
+        // distinct code path from "- key = value" block-mapping elements: here the whole
+        // element is an ordinary value that happens to be a braced object literal.
+        Config c = parseConf(
+                "arr:\n" +
+                "  - { a: 1, b: 2 }\n" +
+                "  - { a: 3, b: 4 }\n");
+        List<? extends Config> list = c.getConfigList("arr");
+        assertEquals(2, list.size());
+        assertEquals(1, list.get(0).getInt("a"));
+        assertEquals(4, list.get(1).getInt("b"));
+    }
+
+    @Test
+    public void tabIndentationWorksIfConsistent() {
+        Config c = parseConf(
+                "arr:\n" +
+                "\t- a\n" +
+                "\t- b\n");
+        assertEquals(java.util.Arrays.asList("a", "b"), c.getStringList("arr"));
+    }
+
+    @Test
+    public void mixedTabsAndSpacesCanMisalignColumns() {
+        // documents a known limitation (see HOCON.md): indentation is a raw character count,
+        // not tab-expanded, so a tab and a run of spaces occupying the same *visual* column
+        // are not considered the same column by the parser.
+        try {
+            parseConf(
+                    "arr:\n" +
+                    "\t- a\n" +
+                    "  - b\n");
+            fail("expected a parse error when tab vs space indentation don't match by character count");
+        } catch (ConfigException.Parse expected) {
+            // expected
+        }
+    }
+
+    @Test
     public void commentsOnDashLinesAndBetweenElements() {
         Config c = parseConf(
                 "arr:\n" +
