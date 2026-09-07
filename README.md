@@ -543,6 +543,9 @@ tree that you could have written (less conveniently) in JSON.
     [HOCON.md](HOCON.md#block-objects-yaml-style)
   - (fork-only extension) YAML-style block scalars, `a: |\n  line one\n  line two` (literal `|`
     and folded `>`, with `-`/`+` chomping); see [HOCON.md](HOCON.md#block-scalars-yaml-style)
+  - (fork-only extension) YAML-style anchors, aliases, and merge keys, `a: &x ...` / `b = *x` /
+    `<<: *x` (recursive merge); see
+    [HOCON.md](HOCON.md#anchors-aliases-and-merge-keys-yaml-style)
 
 ### Examples of HOCON
 

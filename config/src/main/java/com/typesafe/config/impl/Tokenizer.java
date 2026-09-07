@@ -734,6 +734,42 @@ final class Tokenizer {
             return sb.toString();
         }
 
+        // chars allowed in a YAML-style anchor/alias name; a scope simplification versus
+        // YAML's broader anchor-name charset (HOCON.md, "Anchors, aliases, and merge keys").
+        static final String anchorNameChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
+
+        // ---------------------------------------------------------------------------------
+        // YAML-style anchor ('&name') / alias ('*name') support (HOCON.md, "Anchors, aliases,
+        // and merge keys (YAML-style)"). Fork-only extension, gated to CONF syntax
+        // (allowComments). '&' and '*' are already reserved chars (notInUnquotedText), so
+        // there is no existing valid usage to preserve; this just gives them meaning instead
+        // of always being a parse error.
+        // ---------------------------------------------------------------------------------
+
+        private Token pullAnchorName() throws ProblemException {
+            // the initial '&' has already been consumed
+            return Tokens.newAnchorName(lineOrigin, pullAnchorOrAliasName('&'));
+        }
+
+        private Token pullAliasName() throws ProblemException {
+            // the initial '*' has already been consumed
+            return Tokens.newAlias(lineOrigin, pullAnchorOrAliasName('*'));
+        }
+
+        private String pullAnchorOrAliasName(char marker) throws ProblemException {
+            StringBuilder sb = new StringBuilder();
+            int c = nextCharRaw();
+            while (c != -1 && anchorNameChars.indexOf(c) >= 0) {
+                sb.appendCodePoint(c);
+                c = nextCharRaw();
+            }
+            putBack(c);
+            if (sb.length() == 0) {
+                throw problem(asString(marker), "Expecting an anchor/alias name after '" + marker + "'");
+            }
+            return sb.toString();
+        }
+
         private Token pullPlusEquals() throws ProblemException {
             // the initial '+' has already been consumed
             int c = nextCharRaw();
@@ -851,6 +887,10 @@ final class Tokenizer {
                             t = pullQuotedString('\'');
                         } else if (allowComments && (c == '|' || c == '>')) {
                             t = pullBlockScalarHeaderChar((char) c);
+                        } else if (allowComments && c == '&') {
+                            t = pullAnchorName();
+                        } else if (allowComments && c == '*') {
+                            t = pullAliasName();
                         } else if (isReservedChar(c)) {
                             throw problem(asString(c), "Reserved character '" + asString(c)
                                     + "' is not allowed outside quotes", true /* suggestQuotes */);

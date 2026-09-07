@@ -34,6 +34,13 @@ final class ConfigParser {
         final private ConfigOrigin baseOrigin;
         final private LinkedList<Path> pathStack;
 
+        // YAML-style anchor registry (HOCON.md, "Anchors, aliases, and merge keys
+        // (YAML-style)"), fork-only extension: name -> the already-resolved value it was
+        // tagged onto (ConfigNodeAnchoredValue registers here; alias tokens look up here).
+        // Populated strictly in parse order, so an alias can only see anchors defined earlier
+        // in the document - redefining a name just overwrites the earlier entry.
+        final private Map<String, AbstractConfigValue> anchors;
+
         // the number of lists we are inside; this is used to detect the "cannot
         // generate a reference to a list element" problem, and once we fix that
         // problem we should be able to get rid of this variable.
@@ -48,6 +55,7 @@ final class ConfigParser {
             this.includer = includer;
             this.includeContext = includeContext;
             this.pathStack = new LinkedList<Path>();
+            this.anchors = new LinkedHashMap<String, AbstractConfigValue>();
             this.arrayCount = 0;
         }
 
@@ -97,7 +105,14 @@ final class ConfigParser {
 
             int startingArrayCount = arrayCount;
 
-            if (n instanceof ConfigNodeSimpleValue) {
+            if (n instanceof ConfigNodeSimpleValue && Tokens.isAlias(((ConfigNodeSimpleValue) n).token())) {
+                String name = Tokens.getAliasName(((ConfigNodeSimpleValue) n).token());
+                v = anchors.get(name);
+                if (v == null) {
+                    throw parseError("Unknown anchor reference '*" + name + "': no '&" + name
+                            + "' was defined earlier in this document");
+                }
+            } else if (n instanceof ConfigNodeSimpleValue) {
                 v = ((ConfigNodeSimpleValue) n).value();
             } else if (n instanceof ConfigNodeObject) {
                 v = parseObject((ConfigNodeObject)n);
@@ -105,6 +120,10 @@ final class ConfigParser {
                 v = parseArray((ConfigNodeArray)n);
             } else if (n instanceof ConfigNodeConcatenation) {
                 v = parseConcatenation((ConfigNodeConcatenation)n);
+            } else if (n instanceof ConfigNodeAnchoredValue) {
+                ConfigNodeAnchoredValue anchored = (ConfigNodeAnchoredValue) n;
+                v = parseValue(anchored.innerValue(), null);
+                anchors.put(anchored.anchorName(), v);
             } else {
                 throw parseError("Expecting a value but got wrong node type: " + n.getClass());
             }
@@ -214,8 +233,33 @@ final class ConfigParser {
             }
         }
 
+        // YAML-style merge key ("<<: *anchor", or "<<: [*a, *b]"), see HOCON.md "Anchors,
+        // aliases, and merge keys (YAML-style)". Fork-only extension. Recursive merge, reusing
+        // AbstractConfigValue.withFallback() (the same machinery already used for `include` and
+        // duplicate-key merging above) rather than YAML's strict shallow merge - a deliberate
+        // simplification, see HOCON.md.
+        private void addMergeSource(List<AbstractConfigValue> pendingMerges, AbstractConfigValue value) {
+            if (value instanceof AbstractConfigObject) {
+                pendingMerges.add(value);
+            } else if (value instanceof SimpleConfigList) {
+                SimpleConfigList list = (SimpleConfigList) value;
+                for (int i = 0; i < list.size(); i++) {
+                    AbstractConfigValue element = list.get(i);
+                    if (!(element instanceof AbstractConfigObject)) {
+                        throw parseError("Merge key '<<' value must be an object or an array of objects, "
+                                + "found a " + element.valueType() + " in the array");
+                    }
+                    pendingMerges.add(element);
+                }
+            } else {
+                throw parseError("Merge key '<<' value must be an object or an array of objects, not a "
+                        + value.valueType());
+            }
+        }
+
         private AbstractConfigObject parseObject(ConfigNodeObject n) {
             Map<String, AbstractConfigValue> values = new LinkedHashMap<String, AbstractConfigValue>();
+            List<AbstractConfigValue> pendingMerges = new ArrayList<AbstractConfigValue>();
             SimpleConfigOrigin objectOrigin = lineOrigin();
             boolean lastWasNewline = false;
 
@@ -310,7 +354,9 @@ final class ConfigParser {
                     String key = path.first();
                     Path remaining = path.remainder();
 
-                    if (remaining == null) {
+                    if (remaining == null && flavor != ConfigSyntax.JSON && key.equals("<<")) {
+                        addMergeSource(pendingMerges, newValue);
+                    } else if (remaining == null) {
                         AbstractConfigValue existing = values.get(key);
                         if (existing != null) {
                             // In strict JSON, dups should be an error; while in
@@ -345,7 +391,11 @@ final class ConfigParser {
                 }
             }
 
-            return new SimpleConfigObject(objectOrigin, values);
+            AbstractConfigValue merged = new SimpleConfigObject(objectOrigin, values);
+            for (AbstractConfigValue m : pendingMerges) {
+                merged = merged.withFallback(m);
+            }
+            return (AbstractConfigObject) merged;
         }
 
         private SimpleConfigList parseArray(ConfigNodeArray n) {

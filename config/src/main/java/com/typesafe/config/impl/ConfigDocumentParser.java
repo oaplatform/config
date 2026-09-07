@@ -146,7 +146,8 @@ final class ConfigDocumentParser {
                     continue;
                 }
                 else if (Tokens.isValue(t) || Tokens.isUnquotedText(t)
-                        || Tokens.isSubstitution(t) || t == Tokens.OPEN_CURLY
+                        || Tokens.isSubstitution(t) || Tokens.isAlias(t)
+                        || t == Tokens.OPEN_CURLY
                         || t == Tokens.OPEN_SQUARE) {
                     // there may be newlines _within_ the objects and arrays
                     v = parseValue(t);
@@ -241,7 +242,8 @@ final class ConfigDocumentParser {
             AbstractConfigNodeValue v = null;
             int startingEqualsCount = equalsCount;
 
-            if (Tokens.isValue(t) || Tokens.isUnquotedText(t) || Tokens.isSubstitution(t)) {
+            if (Tokens.isValue(t) || Tokens.isUnquotedText(t) || Tokens.isSubstitution(t)
+                    || Tokens.isAlias(t)) {
                 v = new ConfigNodeSimpleValue(t);
             } else if (t == Tokens.OPEN_CURLY) {
                 v = parseObject(true);
@@ -413,6 +415,39 @@ final class ConfigDocumentParser {
             }
         }
 
+        // ---------------------------------------------------------------------------------
+        // YAML-style anchor ('&name') / alias ('*name') support (HOCON.md, "Anchors, aliases,
+        // and merge keys (YAML-style)"). Fork-only extension. An anchor tag sits immediately
+        // before whatever value it tags (scalar/object/array/block-array/block-object/
+        // block-scalar/alias); this speculative peek-and-consume is wired in at every point a
+        // value is about to be parsed (parseSingleField's field value, and both element-start
+        // dispatch points in parseArray/parseDashArrayElement), and the caller wraps whatever
+        // value node comes back in a ConfigNodeAnchoredValue. Alias tokens need no such
+        // wrapping - they're accepted directly alongside ordinary value tokens (see the
+        // Tokens.isAlias(...) additions in consolidateValues/parseValue/parseArray above) and
+        // resolved later, at ConfigParser.ParseContext.parseValue time.
+        // ---------------------------------------------------------------------------------
+        // Same-line-only speculative peek (never crosses a NEWLINE, unlike
+        // nextTokenCollectingWhitespace, which would otherwise wrongly swallow the newline and
+        // next line's leading indentation whenever no anchor tag is present - corrupting the
+        // column bookkeeping that tryDetectDashArrayStart/tryDetectBlockObjectStart rely on).
+        private String tryConsumeAnchorName(Collection<AbstractConfigNode> nodes) {
+            List<Token> peeked = new ArrayList<Token>();
+            Token t = peekToken(peeked);
+            while (isLineWhitespace(t)) {
+                t = peekToken(peeked);
+            }
+            if (Tokens.isAnchorName(t)) {
+                for (int i = 0; i < peeked.size() - 1; i++) {
+                    nodes.add(new ConfigNodeSingleToken(peeked.get(i)));
+                }
+                return Tokens.getAnchorName(t);
+            } else {
+                unpeek(peeked);
+                return null;
+            }
+        }
+
         // Parses "path <separator> value" (the shared shape of an ordinary object field and of
         // a YAML-style block-array element/continuation line, see parseDashArray below) starting
         // from the already-popped first token of the path.
@@ -441,6 +476,9 @@ final class ConfigDocumentParser {
                     equalsCount += 1;
                 }
 
+                String anchorName = flavor != ConfigSyntax.JSON
+                        ? tryConsumeAnchorName(keyValueNodes) : null;
+
                 BlockArrayContext blockArray = flavor != ConfigSyntax.JSON
                         ? tryDetectDashArrayStart(keyValueNodes) : null;
                 if (blockArray != null) {
@@ -456,6 +494,10 @@ final class ConfigDocumentParser {
                             nextValue = parseValue(nextTokenCollectingWhitespace(keyValueNodes));
                         }
                     }
+                }
+
+                if (anchorName != null) {
+                    nextValue = new ConfigNodeAnchoredValue(anchorName, nextValue);
                 }
             }
 
@@ -737,9 +779,13 @@ final class ConfigDocumentParser {
                 return new ConfigNodeObject(fields);
             } else {
                 ArrayList<AbstractConfigNode> scratch = new ArrayList<AbstractConfigNode>();
+                String anchorName = flavor != ConfigSyntax.JSON ? tryConsumeAnchorName(scratch) : null;
                 AbstractConfigNodeValue v = consolidateValues(scratch);
                 if (v == null) {
                     v = parseValue(nextTokenCollectingWhitespace(scratch));
+                }
+                if (anchorName != null) {
+                    v = new ConfigNodeAnchoredValue(anchorName, v);
                 }
                 return v;
             }
@@ -994,6 +1040,7 @@ final class ConfigDocumentParser {
             // invoked just after the OPEN_SQUARE
             Token t;
 
+            String anchorName = flavor != ConfigSyntax.JSON ? tryConsumeAnchorName(children) : null;
             AbstractConfigNodeValue nextValue = consolidateValues(children);
             if (nextValue != null) {
                 children.add(nextValue);
@@ -1002,11 +1049,14 @@ final class ConfigDocumentParser {
 
                 // special-case the first element
                 if (t == Tokens.CLOSE_SQUARE) {
+                    if (anchorName != null) {
+                        throw parseError("Expecting a value after '&" + anchorName + "', got ']'");
+                    }
                     children.add(new ConfigNodeSingleToken(t));
                     return new ConfigNodeArray(children);
                 } else if (Tokens.isValue(t) || t == Tokens.OPEN_CURLY
                         || t == Tokens.OPEN_SQUARE || Tokens.isUnquotedText(t)
-                        || Tokens.isSubstitution(t)) {
+                        || Tokens.isSubstitution(t) || Tokens.isAlias(t)) {
                     nextValue = parseValue(t);
                     children.add(nextValue);
                 } else {
@@ -1016,6 +1066,10 @@ final class ConfigDocumentParser {
                             + t
                             + " to be part of a string value, then double-quote it)");
                 }
+            }
+            if (anchorName != null) {
+                nextValue = new ConfigNodeAnchoredValue(anchorName, nextValue);
+                children.set(children.size() - 1, nextValue);
             }
 
             // now remaining elements
@@ -1038,6 +1092,7 @@ final class ConfigDocumentParser {
                 }
 
                 // now just after a comma
+                anchorName = flavor != ConfigSyntax.JSON ? tryConsumeAnchorName(children) : null;
                 nextValue = consolidateValues(children);
                 if (nextValue != null) {
                     children.add(nextValue);
@@ -1045,11 +1100,14 @@ final class ConfigDocumentParser {
                     t = nextTokenCollectingWhitespace(children);
                     if (Tokens.isValue(t) || t == Tokens.OPEN_CURLY
                             || t == Tokens.OPEN_SQUARE || Tokens.isUnquotedText(t)
-                            || Tokens.isSubstitution(t)) {
+                            || Tokens.isSubstitution(t) || Tokens.isAlias(t)) {
                         nextValue = parseValue(t);
                         children.add(nextValue);
                     } else if (flavor != ConfigSyntax.JSON && t == Tokens.CLOSE_SQUARE) {
                         // we allow one trailing comma
+                        if (anchorName != null) {
+                            throw parseError("Expecting a value after '&" + anchorName + "', got ']'");
+                        }
                         putBack(t);
                     } else {
                         throw parseError("List should have had new element after a comma, instead had token: "
@@ -1058,6 +1116,10 @@ final class ConfigDocumentParser {
                                 + t
                                 + " to be part of a string value, then double-quote it)");
                     }
+                }
+                if (anchorName != null && nextValue != null) {
+                    nextValue = new ConfigNodeAnchoredValue(anchorName, nextValue);
+                    children.set(children.size() - 1, nextValue);
                 }
             }
         }

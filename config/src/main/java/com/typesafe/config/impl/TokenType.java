@@ -20,5 +20,7 @@ enum TokenType {
     SUBSTITUTION,
     PROBLEM,
     COMMENT,
-    PLUS_EQUALS;
+    PLUS_EQUALS,
+    ANCHOR_NAME,
+    ALIAS;
 }

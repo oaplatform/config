@@ -335,6 +335,84 @@ final class Tokens {
         }
     }
 
+    // YAML-style anchor tag ('&name') and alias reference ('*name'); fork-only extension,
+    // see HOCON.md "Anchors, aliases, and merge keys (YAML-style)".
+    static private class AnchorName extends Token {
+        final private String name;
+
+        AnchorName(ConfigOrigin origin, String name) {
+            super(TokenType.ANCHOR_NAME, origin);
+            this.name = name;
+        }
+
+        String name() {
+            return name;
+        }
+
+        @Override
+        public String toString() {
+            return "'&" + name + "'";
+        }
+
+        @Override
+        protected boolean canEqual(Object other) {
+            return other instanceof AnchorName;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return super.equals(other) && ((AnchorName) other).name.equals(name);
+        }
+
+        @Override
+        public int hashCode() {
+            return 41 * (41 + super.hashCode()) + name.hashCode();
+        }
+
+        @Override
+        public String tokenText() {
+            return "&" + name;
+        }
+    }
+
+    static private class Alias extends Token {
+        final private String name;
+
+        Alias(ConfigOrigin origin, String name) {
+            super(TokenType.ALIAS, origin);
+            this.name = name;
+        }
+
+        String name() {
+            return name;
+        }
+
+        @Override
+        public String toString() {
+            return "'*" + name + "'";
+        }
+
+        @Override
+        protected boolean canEqual(Object other) {
+            return other instanceof Alias;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return super.equals(other) && ((Alias) other).name.equals(name);
+        }
+
+        @Override
+        public int hashCode() {
+            return 41 * (41 + super.hashCode()) + name.hashCode();
+        }
+
+        @Override
+        public String tokenText() {
+            return "*" + name;
+        }
+    }
+
     static boolean isValue(Token token) {
         return token instanceof Value;
     }
@@ -422,6 +500,30 @@ final class Tokens {
         return token instanceof IgnoredWhitespace;
     }
 
+    static boolean isAnchorName(Token token) {
+        return token instanceof AnchorName;
+    }
+
+    static String getAnchorName(Token token) {
+        if (token instanceof AnchorName) {
+            return ((AnchorName) token).name();
+        } else {
+            throw new ConfigException.BugOrBroken("tried to get anchor name from " + token);
+        }
+    }
+
+    static boolean isAlias(Token token) {
+        return token instanceof Alias;
+    }
+
+    static String getAliasName(Token token) {
+        if (token instanceof Alias) {
+            return ((Alias) token).name();
+        } else {
+            throw new ConfigException.BugOrBroken("tried to get alias name from " + token);
+        }
+    }
+
     static boolean isSubstitution(Token token) {
         return token instanceof Substitution;
     }
@@ -482,6 +584,14 @@ final class Tokens {
 
     static Token newSubstitution(ConfigOrigin origin, boolean optional, List<Token> expression) {
         return new Substitution(origin, optional, expression);
+    }
+
+    static Token newAnchorName(ConfigOrigin origin, String name) {
+        return new AnchorName(origin, name);
+    }
+
+    static Token newAlias(ConfigOrigin origin, String name) {
+        return new Alias(origin, name);
     }
 
     static Token newValue(AbstractConfigValue value) {

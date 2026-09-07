@@ -24,6 +24,7 @@
     - [Block arrays (YAML-style)](#block-arrays-yaml-style)
     - [Block objects (YAML-style)](#block-objects-yaml-style)
     - [Block scalars (YAML-style)](#block-scalars-yaml-style)
+    - [Anchors, aliases, and merge keys (YAML-style)](#anchors-aliases-and-merge-keys-yaml-style)
     - [Path expressions](#path-expressions)
     - [Paths as keys](#paths-as-keys)
     - [Substitutions](#substitutions)
@@ -643,6 +644,73 @@ Simplifications versus full YAML (documented, not planned to be closed):
 
 A block scalar may be nested inside a block array element's field or a block object's field (and
 vice versa) exactly like any other value.
+
+### Anchors, aliases, and merge keys (YAML-style)
+
+**This is a fork-only extension, not present in upstream lightbend/config, and only recognized
+when parsing HOCON/CONF syntax (never JSON).**
+
+A value may be tagged with a YAML-style anchor, `&name`, placed immediately before the value
+(scalar, object, array, block-array/block-object/block-scalar, or another alias); an `*name`
+alias elsewhere in the document then substitutes a copy of that tagged value:
+
+    defaults: &base_settings
+      timeout: 30
+      retries: 3
+
+    other: *base_settings
+
+`other.timeout` is `30` and `other.retries` is `3`. An anchor may also tag a scalar (`a: &x 42`)
+or an array element (`[&v 1, 2, 3]`). An alias may appear anywhere a value is expected, including
+as a whole array element. Referencing an undefined anchor (`*name` with no earlier `&name`) is a
+parse error. Redefining an anchor name later in the document is allowed — a later `&name` simply
+replaces the earlier one for any alias that follows it.
+
+A field whose key is literally `<<` is a **merge key**: its value must be an alias to an object
+(or an array of such aliases, `<<: [*a, *b]`), and instead of being stored under the key `"<<"`,
+the referenced object's fields are merged into the enclosing object:
+
+    production:
+      <<: *base_settings
+      host: "example.com"
+
+`production.timeout`/`production.retries` come from `*base_settings`, `production.host` is
+`"example.com"`. An explicit field always wins over a merged one, regardless of whether the `<<:`
+line comes before or after it in the source. With `<<: [*a, *b]`, `*a`'s fields win over `*b`'s
+for any key both define, and both lose to any field written explicitly in the enclosing object.
+
+**The merge is recursive, not YAML's shallow merge**: it's implemented by reusing this library's
+existing `withFallback`/object-merge machinery (the same mechanism `include` and duplicate-key
+merging already use), so a nested object under a merged-in key is itself merged field-by-field
+rather than replaced wholesale:
+
+    defaults: &base
+      db:
+        host: a
+        port: 5432
+
+    prod:
+      <<: *base
+      db:
+        host: b
+
+Here `prod.db` is `{ host: b, port: 5432 }` — `port` survives from the anchor even though `db` is
+also given locally, because the merge recurses into `db` instead of treating the local `db` as a
+full override. This is a deliberate divergence from strict YAML merge-key semantics (which merge
+only top-level keys) made for consistency with how the rest of this fork already merges objects.
+
+Simplifications versus full YAML (documented, not planned to be closed):
+
+- Anchor/alias names are restricted to `[A-Za-z0-9_-]+`, not YAML's broader anchor-name charset.
+- An aliased/merged value is **shared by reference** (the same resolved value), not deep-copied
+  per use site. A `${...}` substitution inside an anchored value resolves against the tree
+  structurally (same as everywhere else in HOCON), not per-alias-site — most uses (tagging plain
+  literal/object/array data) are unaffected, but this differs from true YAML alias semantics.
+- Merge key (`<<:`) does a recursive merge, not YAML's shallow top-level-only merge (see above).
+- Detection is purely lexical — a bare `&name`/`*name` outside quotes always triggers this syntax;
+  quote the value to escape it (`foo = "&literal"`).
+- No round-trip/format-preserving guarantee through the `com.typesafe.config.parser`
+  `ConfigDocument` API, same caveat as the other YAML-style extensions.
 
 ### Path expressions
 
